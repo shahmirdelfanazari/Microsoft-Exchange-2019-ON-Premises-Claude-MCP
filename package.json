@@ -1,5 +1,5 @@
 {
-  "name": "microsoft-exchange-2019-on-premises-mcp",
+  "name": "microsoft-exchange-2019-on-premises-claude-mcp",
   "version": "2.0.0",
   "description": "MCP server that connects Claude to on-premises Microsoft Exchange (EWS) and Active Directory for meeting-room booking, calendar and email.",
   "type": "module",
