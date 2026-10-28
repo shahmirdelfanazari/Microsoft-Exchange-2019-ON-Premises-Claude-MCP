@@ -1133,7 +1133,7 @@ async function getEmail(userEmail, itemId) {
   let body = bodyMatch ? bodyMatch[1] : "";
   for (let prev = null; prev !== body; ) { prev = body; body = body.replace(/<[^>]+>/g, ""); }
   body = body.trim();
-  try { await markEmailAsRead(username, password, itemId); } catch {}
+  try { await markEmailAsRead(userEmail, itemId); } catch (e) { console.error('[markEmailAsRead]', e.message); }
   return { subject, body, fromName, fromEmail, received };
 }
 
