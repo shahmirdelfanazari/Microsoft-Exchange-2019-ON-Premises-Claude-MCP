@@ -1,4 +1,4 @@
-# Exchange 2019 On-Premises MCP
+# Microsoft Exchange 2019 On-Premises MCP
 
 An [MCP](https://modelcontextprotocol.io) server that connects Claude (claude.ai, Claude Desktop, Claude Code) to **on-premises Microsoft Exchange** (via EWS) and **Active Directory**. Users can book meeting rooms, check colleagues' free/busy, manage calendar events and handle email in natural language.
 
@@ -50,8 +50,8 @@ The server publishes `/.well-known/oauth-protected-resource` and `/.well-known/o
 ## Setup
 
 ```bash
-git clone https://github.com/<you>/exchange-2019-on-premises-mcp.git
-cd exchange-2019-on-premises-mcp
+git clone https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-MCP.git
+cd Microsoft-Exchange-2019-ON-Premises-MCP
 npm install
 cp .env.example .env              # fill in your values
 cp rooms.example.json rooms.json  # list your room mailboxes

@@ -2,10 +2,10 @@
 // Always start with `pm2 start ecosystem.config.cjs` — `pm2 start index.js` drops --env-file.
 module.exports = {
   apps: [{
-    name: "exchange-2019-on-premises-mcp",
-    script: "/opt/exchange-2019-on-premises-mcp/index.js",
-    node_args: "--env-file=/opt/exchange-2019-on-premises-mcp/.env",
-    cwd: "/opt/exchange-2019-on-premises-mcp",
+    name: "microsoft-exchange-2019-on-premises-mcp",
+    script: "/opt/microsoft-exchange-2019-on-premises-mcp/index.js",
+    node_args: "--env-file=/opt/microsoft-exchange-2019-on-premises-mcp/.env",
+    cwd: "/opt/microsoft-exchange-2019-on-premises-mcp",
     exec_mode: "fork",          // single process: MCP sessions live in memory
     autorestart: true,
     max_memory_restart: "300M"

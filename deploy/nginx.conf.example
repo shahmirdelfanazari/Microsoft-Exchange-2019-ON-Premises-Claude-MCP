@@ -1,4 +1,4 @@
-# Reverse proxy for exchange-2019-on-premises-mcp. Replace mail-mcp.example.com and certificate paths.
+# Reverse proxy for microsoft-exchange-2019-on-premises-mcp. Replace mail-mcp.example.com and certificate paths.
 server { listen 80; server_name mail-mcp.example.com; return 301 https://$host$request_uri; }
 server {
     listen 443 ssl;
