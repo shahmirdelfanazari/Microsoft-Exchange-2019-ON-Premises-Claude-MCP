@@ -1,0 +1,22 @@
+{
+  "name": "exchange-mcp",
+  "version": "2.0.0",
+  "description": "MCP server that connects Claude to on-premises Microsoft Exchange (EWS) and Active Directory for meeting-room booking, calendar and email.",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node --env-file=.env index.js",
+    "check": "node --check index.js && node --check login-server.js && node --check config.js"
+  },
+  "keywords": ["mcp", "model-context-protocol", "exchange", "ews", "active-directory", "claude", "calendar"],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.0",
+    "express": "^5.2.1",
+    "httpntlm": "^1.8.13",
+    "jose": "^6.2.2",
+    "ldapjs": "^3.0.7",
+    "zod": "^3.25.0"
+  }
+}

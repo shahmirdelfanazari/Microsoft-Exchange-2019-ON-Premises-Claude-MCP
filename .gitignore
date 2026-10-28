@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+rooms.json
+*.pem
+*.key
+*.bak*
+*.log
+*.dxt
+*.mcpb
+.claude/
+.DS_Store
