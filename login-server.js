@@ -4,24 +4,39 @@
 // - /dl-file/:id     serves attachments that get_attachments wrote to /tmp (10-minute links)
 // - /logged-out      landing page after OIDC logout
 import express from "express";
-import { readFileSync } from "fs";
+import rateLimit from "express-rate-limit";
+import { readFileSync, unlinkSync } from "fs";
 import { OIDC_AUTH_BASE, LOGIN_PORT } from "./config.js";
 import { T } from "./i18n.js";
 
 const app = express();
+// Behind the local reverse proxy: take the client address from X-Forwarded-For
+app.set("trust proxy", "loopback");
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: "draft-8", legacyHeaders: false }));
 
 // ── Attachment downloads ──
+// get_attachments (index.js, same process) registers each file here; the download
+// route only serves registered entries, so no path is ever built from the request.
+const downloads = new Map(); // id -> { file, name, contentType }
+const DOWNLOAD_TTL_MS = 10 * 60 * 1000;
+
+export function registerDownload(id, file, name, contentType) {
+  downloads.set(id, { file, name, contentType });
+  setTimeout(() => {
+    downloads.delete(id);
+    try { unlinkSync(file); } catch {}
+  }, DOWNLOAD_TTL_MS).unref();
+}
+
 app.get("/dl-file/:shortId", (req, res) => {
-  const id = req.params.shortId;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(404).send("File not found or expired.");
-  const tmpFile = `/tmp/exchange-att-${id}`;
+  const entry = downloads.get(req.params.shortId);
+  if (!entry) return res.status(404).send("File not found or expired (links valid for 10 minutes).");
   try {
-    const meta = JSON.parse(readFileSync(tmpFile + '.meta', 'utf8'));
-    const buffer = readFileSync(tmpFile);
-    res.setHeader("Content-Type", meta.contentType || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(meta.name || "file")}`);
+    const buffer = readFileSync(entry.file);
+    res.setHeader("Content-Type", entry.contentType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(entry.name || "file")}`);
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (e) {

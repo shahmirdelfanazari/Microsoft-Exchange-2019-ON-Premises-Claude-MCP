@@ -1,5 +1,4 @@
-import { writeFileSync, unlinkSync } from 'fs';
-import { setTimeout as setTimeoutP } from 'timers';
+import { writeFileSync } from 'fs';
 import * as jose from "jose";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -109,7 +108,7 @@ const WORK_END_HOUR = 22;
 const WORK_DAYS = [0, 1, 2, 3, 6]; // Sun=0 Mon=1 ... Sat=6 → Sat=6,Sun=0,Mon=1,Tue=2,Wed=3
 
 // ─── Auxiliary HTTP server (OAuth callback, attachment downloads) ─────────────
-import "./login-server.js";
+import { registerDownload } from "./login-server.js";
 import ldapjsPkg from "ldapjs";
 
 // ── LDAP helpers for org chart ──
@@ -1130,7 +1129,10 @@ async function getEmail(userEmail, itemId) {
   const fromName = (item.match(/<(?:[^:>]+:)?From>[\s\S]*?<(?:[^:>]+:)?Name>([^<]+)</) || [])[1];
   const fromEmail = (item.match(/<(?:[^:>]+:)?From>[\s\S]*?<(?:[^:>]+:)?EmailAddress>([^<]+)</) || [])[1];
   const bodyMatch = item.match(/<(?:[^:>]+:)?Body[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?Body>/);
-  const body = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+  // Strip tags until none are left (a single pass can leave fragments like "<<b>script>")
+  let body = bodyMatch ? bodyMatch[1] : "";
+  for (let prev = null; prev !== body; ) { prev = body; body = body.replace(/<[^>]+>/g, ""); }
+  body = body.trim();
   try { await markEmailAsRead(username, password, itemId); } catch {}
   return { subject, body, fromName, fromEmail, received };
 }
@@ -2557,12 +2559,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
             const buffer = Buffer.from(content64.replace(/\s/g, ''), 'base64');
             const shortId = randomUUID();
             const tmpFile = `/tmp/exchange-att-${shortId}`;
-            writeFileSync(tmpFile, buffer);
-            // Auto-delete after 10 min
-            setTimeoutP(() => { try { unlinkSync(tmpFile); unlinkSync(tmpFile + '.meta'); } catch {} }, 600000);
-            // Store metadata
-            const meta = JSON.stringify({ name: a.name, contentType: a.contentType || 'application/octet-stream' });
-            writeFileSync(tmpFile + '.meta', meta);
+            writeFileSync(tmpFile, buffer, { mode: 0o600 });
+            // Served by login-server.js /dl-file for 10 min, then deleted
+            registerDownload(shortId, tmpFile, a.name, a.contentType || 'application/octet-stream');
             const url = `${PUBLIC_URL}/auth/dl-file/${shortId}`;
             return `${i+1}. 📎 ${a.name} (${kb} KB)\nDownload: ${url}`;
           } catch (e) {

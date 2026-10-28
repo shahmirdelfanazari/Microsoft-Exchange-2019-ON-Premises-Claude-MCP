@@ -5,18 +5,32 @@
   "type": "module",
   "main": "index.js",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node --env-file=.env index.js",
     "check": "node --check index.js && node --check login-server.js && node --check config.js"
   },
-  "keywords": ["mcp", "model-context-protocol", "exchange", "ews", "active-directory", "claude", "calendar"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "exchange",
+    "ews",
+    "active-directory",
+    "claude",
+    "calendar"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
     "express": "^5.2.1",
     "httpntlm": "^1.8.13",
     "jose": "^6.2.2",
     "ldapjs": "^3.0.7",
-    "zod": "^3.25.0"
+    "zod": "^4.6.7",
+    "express-rate-limit": "^8.0.0"
+  },
+  "overrides": {
+    "underscore": "^1.13.8"
   }
 }
