@@ -6,6 +6,7 @@
 import express from "express";
 import { readFileSync } from "fs";
 import { OIDC_AUTH_BASE, LOGIN_PORT } from "./config.js";
+import { T } from "./i18n.js";
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -41,7 +42,7 @@ app.get("/oauth-callback", (req, res) => {
     }
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:Vazirmatn,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#1a1a1a;color:#f0c040;direction:rtl}</style></head><body><div style="text-align:center"><h1>✅ ورود موفق</h1><p style="color:#ccd6f6">برگردید به Claude و دوباره امتحان کنید.</p></div></body></html>`);
+  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:Vazirmatn,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#1a1a1a;color:#f0c040;direction:${T.dir}}</style></head><body><div style="text-align:center"><h1>✅ ${T.loginOkTitle}</h1><p style="color:#ccd6f6">${T.loginOkText}</p></div></body></html>`);
 });
 
 // Client polls this with its state + PKCE verifier to exchange the code for tokens
@@ -69,14 +70,14 @@ app.post("/poll-token", async (req, res) => {
 app.get("/logged-out", (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!DOCTYPE html>
-<html dir="rtl" lang="fa">
+<html dir="${T.dir}" lang="${T.lang}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>خروج موفق</title>
+  <title>${T.logoutTitle}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Vazirmatn','Segoe UI',Tahoma,sans-serif; background: #1a1a1a; min-height: 100vh; display: flex; align-items: center; justify-content: center; direction: rtl; }
+    body { font-family: 'Vazirmatn','Segoe UI',Tahoma,sans-serif; background: #1a1a1a; min-height: 100vh; display: flex; align-items: center; justify-content: center; direction: ${T.dir}; }
     .card { background: #242424; border: 1px solid #333; border-radius: 16px; padding: 40px; width: 100%; max-width: 400px; text-align: center; }
     h1 { color: #f0c040; font-size: 24px; margin-bottom: 16px; font-weight: 700; }
     p { color: #999; font-size: 15px; line-height: 1.8; }
@@ -86,8 +87,8 @@ app.get("/logged-out", (req, res) => {
 <body>
   <div class="card">
     <div class="icon">✅</div>
-    <h1>با موفقیت خارج شدید</h1>
-    <p>می‌توانید این صفحه را ببندید و به Claude برگردید.</p>
+    <h1>${T.logoutHeading}</h1>
+    <p>${T.logoutText}</p>
   </div>
 </body>
 </html>`);

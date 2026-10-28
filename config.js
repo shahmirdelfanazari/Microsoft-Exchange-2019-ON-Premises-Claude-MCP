@@ -36,6 +36,9 @@ export const OIDC_CLIENT_SECRET = optional("OIDC_CLIENT_SECRET", optional("KEYCL
 // Public HTTPS URL of this server (behind your reverse proxy), e.g. https://mail-mcp.example.com
 export const PUBLIC_URL = required("PUBLIC_URL").replace(/\/$/, "");
 
+// Language of replies shown to users: "en" or "fa" (strings live in locales/)
+export const UI_LANGUAGE = optional("UI_LANGUAGE", "en").toLowerCase();
+
 export const PORT = Number(optional("PORT", "3000"));
 export const LOGIN_PORT = Number(optional("LOGIN_PORT", "3001"));
 

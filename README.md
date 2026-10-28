@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that connects Claude (claude.ai
 
 Users sign in with your **OpenID Connect provider** (tested with Keycloak). The server validates their JWT and acts as them in Exchange through one service account with **ApplicationImpersonation**, so no user password ever reaches the server.
 
-> **Language:** user-facing replies are in **Persian (Farsi)** and times are handled in **Iran Standard Time (UTC+03:30)**. Both are easy to change: see [Customizing](#customizing).
+> **Language:** replies are in **English** by default; set `UI_LANGUAGE=fa` for **Persian (Farsi)**. Times are handled in **Iran Standard Time (UTC+03:30)**, which is easy to change: see [Customizing](#customizing).
 
 ## Features
 
@@ -78,7 +78,7 @@ Room mailboxes should be **auto-accept** resource mailboxes.
 
 ```json
 {
-  "rooms":      [{ "email": "room-a1@example.com", "name": "A1 (6-8 نفر)" }],
+  "rooms":      [{ "email": "room-a1@example.com", "name": "A1 (6-8 people)" }],
   "restricted": { "room-exec@example.com": "exec-room@example.com" },
   "excluded":   ["room-other-building@example.com"],
   "sizeGuide":  "2 people→A2, 3-4→B1, 6-8→A1"
@@ -103,7 +103,7 @@ Use pm2 with `deploy/ecosystem.config.cjs.example`, and run a single process (MC
 
 - **Timezone:** Iran time (fixed +210 minutes, no DST) is used in `nowIran()`, `isPastDateTime()`, `iranLocalToMs()`, `get_current_time` and the availability request (`Bias=-210`). Change these for another zone.
 - **Work week and hours:** `isWorkDay()` (Friday off), `WORK_START_HOUR` and `WORK_END_HOUR` in `index.js`.
-- **Language:** user-facing strings in the tool handlers and the `instructions` string are Persian.
+- **Language:** every user-facing string lives in `locales/en.js` and `locales/fa.js`. `UI_LANGUAGE` chooses which one is used. To add a language, copy `locales/en.js` (keep every key), translate it, and register it in `i18n.js`.
 
 ## Security
 

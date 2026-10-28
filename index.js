@@ -13,6 +13,7 @@ import {
   PUBLIC_URL, PORT, LDAP_URLS, LDAP_BASE_DN, LDAPS_CA,
   ROOMS, RESTRICTED_ROOMS, EXCLUDED_ROOMS, ROOM_SIZE_GUIDE
 } from "./config.js";
+import { T } from "./i18n.js";
 
 // ─── Iran Timezone Helpers ───────────────────────────────────────────────────
 function nowIran()
@@ -48,29 +49,29 @@ function isPastDateTime(iranLocalISO) {
 // The date is resolved server-side so a stale or assumed date is visible to the
 // user in the preview BEFORE any invitation is sent.
 function describeDate(dateStr) {
-  const daysFa = ['\u06cc\u06a9\u0634\u0646\u0628\u0647','\u062f\u0648\u0634\u0646\u0628\u0647','\u0633\u0647\u200c\u0634\u0646\u0628\u0647','\u0686\u0647\u0627\u0631\u0634\u0646\u0628\u0647','\u067e\u0646\u062c\u0634\u0646\u0628\u0647','\u062c\u0645\u0639\u0647','\u0634\u0646\u0628\u0647'];
+  const days = T.weekdays;
   const [y, mo, dd] = dateStr.split('-').map(Number);
   const target = Date.UTC(y, mo - 1, dd);
   const dow = new Date(target).getUTCDay();
   const [ty, tmo, tdd] = todayIran().split('-').map(Number);
   const diff = Math.round((target - Date.UTC(ty, tmo - 1, tdd)) / 86400000);
   let rel;
-  if (diff === 0) rel = '\u0627\u0645\u0631\u0648\u0632';
-  else if (diff === 1) rel = '\u0641\u0631\u062f\u0627';
-  else if (diff === -1) rel = '\u062f\u06cc\u0631\u0648\u0632 \u26a0\ufe0f';
-  else if (diff > 1) rel = diff + ' \u0631\u0648\u0632 \u062f\u06cc\u06af\u0631';
-  else rel = Math.abs(diff) + ' \u0631\u0648\u0632 \u067e\u06cc\u0634 \u26a0\ufe0f';
-  return daysFa[dow] + ' ' + dateStr + ' (' + rel + ')';
+  if (diff === 0) rel = T.today;
+  else if (diff === 1) rel = T.tomorrow;
+  else if (diff === -1) rel = T.yesterday + ' \u26a0\ufe0f';
+  else if (diff > 1) rel = T.inDays(diff);
+  else rel = T.daysAgo(Math.abs(diff)) + ' \u26a0\ufe0f';
+  return days[dow] + ' ' + dateStr + ' (' + rel + ')';
 }
 
 function normalizePersianName(name) {
   if (!name) return '';
   return name
     .replace(/\s+/g, '') // remove all spaces
-    .replace(/ي/g, 'ی')  // normalize Arabic ya to Persian ya
-    .replace(/ك/g, 'ک')  // normalize Arabic kaf to Persian kaf
-    .replace(/ة/g, 'ه')  // normalize ta marbuta
-    .replace(/أ|إ|آ/g, 'ا') // normalize alef variants
+    .replace(/\u064a/g, '\u06cc')  // normalize Arabic ya to Persian ya
+    .replace(/\u0643/g, '\u06a9')  // normalize Arabic kaf to Persian kaf
+    .replace(/\u0629/g, '\u0647')  // normalize ta marbuta
+    .replace(/\u0623|\u0625|\u0622/g, '\u0627') // normalize alef variants
     .toLowerCase();
 }
 
@@ -546,7 +547,7 @@ async function checkRecurringAvailability(checkEmails, startTime, endTime, occur
     } catch (e) { avail = null; }
     if (avail && avail.__errors) avail.__errors.forEach(e => unknown.add(e));
     for (const date of batch) {
-      if (!avail) { conflicts.push({ date, busy: ['(بررسی ناموفق بود)'] }); continue; }
+      if (!avail) { conflicts.push({ date, busy: [T.checkFailed] }); continue; }
       const slot = { start: `${date}T${startTime}`, end: `${date}T${endTime}` };
       const busy = checkEmails.filter(email => isBusy(slot, avail[email] || []));
       if (busy.length) conflicts.push({ date, busy });
@@ -1300,14 +1301,14 @@ async function expandGroup(groupEmail, impersonateEmail = null) {
 
 async function canUserBookRoom(roomEmail, userEmail = null) {
   if (EXCLUDED_ROOMS.includes(roomEmail)) {
-    return { allowed: false, reason: "این اتاق در دسترس نیست." };
+    return { allowed: false, reason: T.roomUnavailable };
   }
   const groupEmail = RESTRICTED_ROOMS[roomEmail];
   if (!groupEmail) return { allowed: true };
   const isMember = await checkUserInGroup(groupEmail, new Set(), userEmail);
   if (isMember) return { allowed: true };
   const roomName = roomEmail.split("@")[0].replace("room-","").toUpperCase();
-  return { allowed: false, reason: "متاسفانه شما به اتاق " + roomName + " دسترسی ندارید. برای دسترسی با IT تماس بگیرید." };
+  return { allowed: false, reason: T.roomNoAccess(roomName) };
 }
 
 async function getAccessibleRooms(userEmail = null) {
@@ -1347,13 +1348,13 @@ async function buildRoomDeniedMessage(reason, userEmail, date = null, start_time
         const altAvail = await getAvailability(accessibleEmails, dayStart, dayEnd);
         const freeRooms = accessibleEmails.filter(e => !isBusy({ start: slotStart, end: slotEnd }, altAvail[e] || []));
         if (freeRooms.length) {
-          altText = `\n\nاتاق‌های در دسترس شما که در این بازه آزادند:\n` +
+          altText = `\n\n${T.freeAccessibleRooms}:\n` +
             freeRooms.map(e => `  • ${getRoomDisplayName(e)} — ${e}`).join('\n');
         }
       }
     }
   } catch {}
-  return `❌ ${reason}${altText}\n\n(این اتاق نباید در پیش‌نمایش رزرو نشان داده می‌شد — پیش از رزرو دسترسی را با list_rooms بررسی کن.)`;
+  return `❌ ${reason}${altText}\n\n(${T.roomDeniedHint})`;
 }
 
 
@@ -1391,18 +1392,18 @@ function buildMcpServer(bearerToken = null, sessionRef = null) {
     instructions: `Exchange Calendar MCP. Read carefully and follow exactly.
 
 ## AUTHENTICATION
-Never output any URL. Never ask user to log in or send a token. Authentication is 100% automatic — just call any tool and the DXT opens Keycloak browser automatically. After logout respond ONLY with "✅ خارج شدی." — nothing else.
+Never output any URL. Never ask user to log in or send a token. Authentication is 100% automatic — just call any tool and the DXT opens Keycloak browser automatically. After logout respond ONLY with "${T.loggedOut}" — nothing else.
 
 ## TIME GATE -- MANDATORY, NO EXCEPTIONS
 *** You do NOT know today's date. NEVER assume, guess, or rely on any date from the conversation history, your training, or the system context. The ONLY valid source of the current date is the get_current_time tool. ***
-- The MOMENT the user uses ANY relative time reference (today, tomorrow, yesterday, tonight, now, this week, next week, this month, day-after-tomorrow, or any weekday name, or their Persian equivalents), you MUST call get_current_time FIRST, before any other tool (list_events, smart_schedule, check_availability, etc.).
+- The MOMENT the user uses ANY relative time reference (today, tomorrow, yesterday, tonight, now, this week, next week, this month, day-after-tomorrow, or any weekday name, ${T.instr.relativeNote}), you MUST call get_current_time FIRST, before any other tool (list_events, smart_schedule, check_availability, etc.).
 - Do this even if you think you already know the date, and even if a date already appeared earlier in this conversation -- dates in history may be stale or wrong. Re-fetch every time you resolve a relative reference.
 - All times are Iran timezone (UTC+3:30). Never convert to UTC.
 - To compute "this week": call get_current_time, read the Day field, then derive the Saturday-to-Friday range from that exact date. Never derive a week range from a remembered date.
 
 ## ROOM ACCESS GATE — MANDATORY, NO EXCEPTIONS
 *** Whenever a specific room is named or chosen, you MUST call list_rooms BEFORE showing any preview or calling smart_schedule. ***
-- This applies even when the user names the room directly ("تو اتاق A1", "اتاق B1"). Naming a room is NOT permission — you still must verify access first.
+- This applies even when the user names the room directly (${T.instr.roomExamples}). Naming a room is NOT permission — you still must verify access first.
 - Read the ✅/🔒 status for that exact room from list_rooms output.
 - If 🔒: STOP. Do not preview it, do not call smart_schedule, do not "try anyway". Tell the user they don't have access and offer ✅ same-size alternatives.
 - If ✅: proceed to preview, then book.
@@ -1410,13 +1411,13 @@ Never output any URL. Never ask user to log in or send a token. Authentication i
 
 ## BOOKING FLOW — ALWAYS follow this order
 1. Collect: subject, date/time, attendees, duration (default 60 min)
-2. Ask about room if not mentioned: "می‌خوای اتاق هم رزرو کنم؟"
+2. Ask about room if not mentioned: "${T.instr.askRoom}"
 3. The MOMENT any room is named or chosen → call list_rooms and read its ✅/🔒 status (see ROOM ACCESS GATE above). A 🔒 room never reaches the preview. If the named room is 🔒, tell the user they lack access and offer ✅ alternatives — do NOT preview or offer to "try anyway".
 4. Show preview: subject, date/time, attendees, room (room MUST be ✅ — already verified in step 3) — ask confirmation
-5. WAIT for explicit user confirmation — "بله", "آره", "ok", "yes", "تایید" — NEVER book without this
+5. WAIT for explicit user confirmation — ${T.instr.confirmWords} — NEVER book without this
 6. *** IMMEDIATELY BEFORE BOOKING: call check_availability again for ALL attendees + chosen room ***
 7. Only after confirmation AND fresh availability check: execute booking
-*** CRITICAL: Never auto-book. Never skip confirmation. Even if user says "همون" or "نک" — still show preview and wait for explicit yes ***
+*** CRITICAL: Never auto-book. Never skip confirmation. Even if user says ${T.instr.vagueWords} — still show preview and wait for explicit yes ***
 
 ## ROOM RULES
 - ALWAYS call list_rooms first — NEVER guess room emails or access permissions
@@ -1435,7 +1436,7 @@ Never output any URL. Never ask user to log in or send a token. Authentication i
 ## TEAM MEETINGS
 - book_meeting_with_direct_reports: includes manager as first attendee automatically
 - book_meeting_with_team: includes manager as first attendee automatically
-- "تیم X" or "زیرمجموعه X" means manager + all direct reports
+- ${T.instr.teamPhrases} means manager + all direct reports
 
 ## RECURRING EVENTS — CRITICAL
 *** NEVER create separate meetings for recurring requests. ALWAYS use recurrence param in smart_schedule ***
@@ -1444,9 +1445,9 @@ Never output any URL. Never ask user to log in or send a token. Authentication i
 - Daily 5 days: recurrence={type:'daily',interval:1,occurrences:5}
 - Monthly 3 months: recurrence={type:'monthly',interval:1,occurrences:3}
 - With end date: recurrence={type:'weekly',interval:1,end_date:'2026-08-01'}
-If user says "هر هفته", "هفتگی", "هر روز", "ماهانه", "تکرارشونده", "recurring" → MUST use recurrence param
-NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence param, always use it
-- For delete: ask "فقط این جلسه، این و بعدی‌ها، یا کل سری؟" → SpecifiedOccurrenceOnly | AllFollowingOccurrences | AllOccurrences
+If user says ${T.instr.recurringPhrases} → MUST use recurrence param
+NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, always use it
+- For delete: ask "${T.deleteScopeQuestion}" → SpecifiedOccurrenceOnly | AllFollowingOccurrences | AllOccurrences
 
 ## UPDATE EVENT
 - Always call list_events first to get fresh change_key
@@ -1462,7 +1463,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
 ## LIST EVENTS — CRITICAL
 - ALWAYS use full day range: start=YYYY-MM-DDT00:00:00, end=YYYY-MM-DDT23:59:59
 - NEVER use current time as start — always start from T00:00:00
-- "امشب", "امروز", "فردا" all mean the FULL day from 00:00:00 to 23:59:59
+- ${T.instr.dayWords} all mean the FULL day from 00:00:00 to 23:59:59
 - If first call returns empty, retry with same range before giving up
 
 ## AVAILABILITY — CRITICAL RULE
@@ -1476,7 +1477,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
   // ── search_user ──
   server.tool("search_user",
     "Search for a user by name (Persian or English) to get their email address.",
-    { session_token: z.string().optional().optional(), query: z.string().describe("Name to search, e.g. علی محمدی or ali") },
+    { session_token: z.string().optional().optional(), query: z.string().describe(`Name to search, ${T.searchExample}`) },
     async ({ session_token, query }) => {
       // Ignore session_token if it looks like a placeholder (not a real JWT or UUID)
     const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
@@ -1487,7 +1488,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
       const userName = payload.preferred_username;
       try {
         const results = await resolveNames(query);
-        if (!results.length) return { content: [{ type: "text", text: `هیچ کاربری با نام "${query}" پیدا نشد. نام را با فرمت دیگری امتحان کنید.` }] };
+        if (!results.length) return { content: [{ type: "text", text: T.userNotFound(query) }] };
 
         // Auto-select if only 1 result or top result is clearly best (score >= 80 and much higher than #2)
         const top = results[0];
@@ -1495,16 +1496,16 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         const clearWinner = top.score >= 80 && (!second || top.score - second.score >= 20);
 
         if (results.length === 1 || clearWinner) {
-          return { content: [{ type: "text", text: `✅ یافت شد: ${top.name} <${top.email}>\n💡 برای یافتن زیرمجموعه‌ها، get_direct_reports را با manager_email: ${top.email} فراخوانی کنید.` }] };
+          return { content: [{ type: "text", text: T.userFound(top.name, top.email) }] };
         }
 
         // Show top 10 only
         const topResults = results.slice(0, 10);
         const list = topResults.map((r, i) => `${i+1}. ${r.name} <${r.email}>`).join("\n");
         const moreMsg = results.length > 10
-          ? `\n\n⚠️ ${results.length} نفر یافت شد — فقط ۱۰ نفر اول نشان داده شد. نام دقیق‌تری وارد کنید.`
+          ? `\n\n⚠️ ${T.tooManyUsers(results.length)}`
           : '';
-        return { content: [{ type: "text", text: `${topResults.length} کاربر یافت شد:\n${list}${moreMsg}\n\nکدام یکی؟` }] };
+        return { content: [{ type: "text", text: `${T.usersFound(topResults.length)}:\n${list}${moreMsg}\n\n${T.whichOne}` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
   );
@@ -1515,7 +1516,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
 
 
   server.tool("get_direct_reports",
-    "Find all direct reports (subordinates) of a manager using Exchange directory. ALWAYS call this after search_user finds a manager, when user wants to meet or email their team. Triggers: 'people under X', 'X team', 'زیرمجموعه X', 'کسانی که مدیرشون X هست', 'تیم X'.",
+    `Find all direct reports (subordinates) of a manager using Exchange directory. ALWAYS call this after search_user finds a manager, when user wants to meet or email their team. Triggers: 'people under X', 'X team', ${T.directReportsTriggers}.`,
     {
       session_token:  z.string(),
       manager_email:  z.string().describe("Email of the manager")
@@ -1540,7 +1541,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
   );
 
   server.tool("get_manager",
-    "Find the manager of a user using LDAP directory. Use when user asks 'who is my manager', 'مدیرم کیه', 'مدیر X کیه', 'boss of X'.",
+    `Find the manager of a user using LDAP directory. Use when user asks 'who is my manager', ${T.managerTriggers}, 'boss of X'.`,
     {
       session_token: z.string().optional().optional(),
       user_email: z.string().describe("Email of the user to find the manager for")
@@ -1825,10 +1826,10 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         const list = rooms.map((r, i) => {
           const accessible = r.accessible !== false;
           const icon = accessible ? "✅" : "🔒";
-          const note = accessible ? " (دسترسی دارید — قابل رزرو)" : " (دسترسی ندارید — با IT تماس بگیرید)";
+          const note = accessible ? ` (${T.roomAccessYes})` : ` (${T.roomAccessNo})`;
           return `${i+1}. ${icon} ${r.name}${note}\n   📧 ${r.email}`;
         }).join("\n");
-        return { content: [{ type: "text", text: `🏢 ${rooms.length} اتاق (وضعیت دسترسی شما بر اساس عضویت گروه AD):\n\n${list}\n\n⚠️ ✅ یعنی قطعاً دسترسی رزرو دارید — نیازی به تست رزرو نیست. 🔒 یعنی قطعاً دسترسی ندارید.` }] };
+        return { content: [{ type: "text", text: `🏢 ${T.roomsHeader(rooms.length)}:\n\n${list}\n\n⚠️ ${T.roomsFooter}` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
   );
@@ -1864,32 +1865,32 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         for (const email of emails) {
           const busy = avail[email] || [];
           out += `👤 ${email}\n`;
-          if (!busy.length) { out += `   ✅ آزاد\n`; }
+          if (!busy.length) { out += `   ✅ ${T.free}\n`; }
           else { busy.forEach(b => { out += `   🔴 Busy: ${formatDateTime(b.start)} → ${formatDateTime(b.end)}\n`; }); }
           out += "\n";
         }
 
-        out += `🏢 اتاق‌ها (وضعیت دسترسی این کاربر بر اساس LDAP):\n`;
+        out += `🏢 ${T.availRoomsHeader}:\n`;
         for (const email of roomEmails) {
           const busy = avail[email] || [];
           const roomName = getRoomDisplayName(email);
           const hasAccess = accessMap[email];
           if (!hasAccess) {
             // Free or busy is irrelevant — user cannot book this room. Do NOT suggest.
-            out += `   🔒 ${roomName} — دسترسی ندارید (پیشنهاد نده)\n`;
+            out += `   🔒 ${roomName} — ${T.availNoAccess}\n`;
           } else if (!busy.length) {
-            out += `   ✅ ${roomName} — آزاد و قابل رزرو\n`;
+            out += `   ✅ ${roomName} — ${T.availFree}\n`;
           } else {
-            out += `   🔴 ${roomName} — مشغول\n`;
+            out += `   🔴 ${roomName} — ${T.busy}\n`;
           }
         }
         if (freeSlots.length) {
-          out += `\n✅ اسلات‌های مشترک آزاد:\n`;
+          out += `\n✅ ${T.commonFreeSlots}:\n`;
           freeSlots.forEach(sl => { out += `   • ${formatSlot(sl)}\n`; });
         } else {
-          out += `\n❌ هیچ اسلات مشترک آزادی در ${date} پیدا نشد.`;
+          out += `\n❌ ${T.noCommonSlots(date)}`;
         }
-        out += `\n\n⚠️ فقط اتاق‌های ✅ را پیشنهاد بده. اتاق‌های 🔒 را هرگز پیشنهاد نده و درباره دسترسی هیچ اتاقی فرض نکن — این لیست تنها منبع حقیقت است.`;
+        out += `\n\n⚠️ ${T.availFooter}`;
         return { content: [{ type: "text", text: out }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
@@ -1927,30 +1928,30 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         // Normalize inputs: accept H:MM, HH:MM, HH:MM:SS; reject malformed values up front
         const _tm = String(start_time || "").trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
         if (!_tm || Number(_tm[1]) > 23 || Number(_tm[2]) > 59) {
-          return { content: [{ type: "text", text: `❌ فرمت ساعت نامعتبر: "${start_time}" — ساعت را به شکل HH:MM بفرست (مثلاً 09:30).` }] };
+          return { content: [{ type: "text", text: `❌ ${T.badTime(start_time)}` }] };
         }
         start_time = `${pad(Number(_tm[1]))}:${_tm[2]}`;
         date = String(date || "").trim();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          return { content: [{ type: "text", text: `❌ فرمت تاریخ نامعتبر: "${date}" — تاریخ را به شکل YYYY-MM-DD بفرست.` }] };
+          return { content: [{ type: "text", text: `❌ ${T.badDate(date)}` }] };
         }
         if (!(Number(duration_minutes) > 0)) {
-          return { content: [{ type: "text", text: `❌ مدت جلسه باید بیشتر از صفر دقیقه باشد.` }] };
+          return { content: [{ type: "text", text: `❌ ${T.badDuration}` }] };
         }
         duration_minutes = Number(duration_minutes);
         if (Number(_tm[1]) * 60 + Number(_tm[2]) + duration_minutes > 24 * 60) {
-          return { content: [{ type: "text", text: `❌ جلسه نمی‌تواند از نیمه‌شب عبور کند — ساعت شروع یا مدت را کم کن.` }] };
+          return { content: [{ type: "text", text: `❌ ${T.crossesMidnight}` }] };
         }
         // Guard: reject past datetimes
         if (isPastDateTime(`${date}T${start_time}:00`)) {
-          return { content: [{ type: "text", text: `\u274c \u0632\u0645\u0627\u0646 \u0627\u0646\u062a\u062e\u0627\u0628\u06cc (${date} ${start_time}) \u06af\u0630\u0634\u062a\u0647 \u0627\u0633\u062a. \u0627\u0645\u0631\u0648\u0632 ${todayIran()} \u0627\u0633\u062a. \u0644\u0637\u0641\u0627\u064b \u0632\u0645\u0627\u0646 \u0622\u06cc\u0646\u062f\u0647\u200c\u0627\u06cc \u0627\u0646\u062a\u062e\u0627\u0628 \u06a9\u0646\u06cc\u062f.` }] };
+          return { content: [{ type: "text", text: `\u274c ${T.pastTime(`${date} ${start_time}`, todayIran())}` }] };
         }
         // Guard: validate and check room access
         if (room_email) {
           const validRoom = validateRoomEmail(room_email);
           if (validRoom === null) {
             const roomList = Object.entries(ROOM_NAMES).map(([e,n]) => `  \u2022 ${n} \u2014 ${e}`).join('\n');
-            return { content: [{ type: "text", text: `\u274c \u0627\u06cc\u0645\u06cc\u0644 \u0627\u062a\u0627\u0642 \u0646\u0627\u0645\u0639\u062a\u0628\u0631: "${room_email}"\n\n\u0627\u062a\u0627\u0642\u200c\u0647\u0627\u06cc \u0645\u0648\u062c\u0648\u062f:\n${roomList}` }] };
+            return { content: [{ type: "text", text: `\u274c ${T.invalidRoom(room_email)}:\n${roomList}` }] };
           }
           if (validRoom !== room_email) room_email = validRoom;
           const roomAccess = await canUserBookRoom(room_email, userEmail);
@@ -1968,19 +1969,19 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         // Preview builder (shared single/recurring)
         const buildPreview = (occDates) => {
           const _pe = endTimeStr.substring(0,5);
-          let p = `\u{1F4CB} \u067e\u06cc\u0634\u200c\u0646\u0645\u0627\u06cc\u0634 \u2014 \u0647\u0646\u0648\u0632 \u0686\u06cc\u0632\u06cc \u062b\u0628\u062a \u0646\u0634\u062f\u0647 \u0648 \u062f\u0639\u0648\u062a\u200c\u0646\u0627\u0645\u0647\u200c\u0627\u06cc \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062f\u0647.\n\n`;
-          p += `\u{1F4CC} \u0645\u0648\u0636\u0648\u0639: ${subject}\n`;
-          p += `\u{1F4C5} \u062a\u0627\u0631\u06cc\u062e: ${describeDate(date)}\n`;
-          p += `\u{1F552} \u0633\u0627\u0639\u062a: ${start_time} \u062a\u0627 ${_pe}\n`;
-          p += `\u{1F4CD} \u0627\u062a\u0627\u0642: ${room_email ? getRoomDisplayName(room_email) : "\u0628\u062f\u0648\u0646 \u0627\u062a\u0627\u0642"}\n`;
-          p += `\u{1F465} \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u06af\u0627\u0646: ${attendee_emails && attendee_emails.length ? attendee_emails.join("\u060c ") : "\u0628\u062f\u0648\u0646 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u0647"}\n`;
+          let p = `\u{1F4CB} ${T.previewTitle}\n\n`;
+          p += `\u{1F4CC} ${T.subject}: ${subject}\n`;
+          p += `\u{1F4C5} ${T.date}: ${describeDate(date)}\n`;
+          p += `\u{1F552} ${T.time}: ${start_time} ${T.to} ${_pe}\n`;
+          p += `\u{1F4CD} ${T.room}: ${room_email ? getRoomDisplayName(room_email) : T.noRoom}\n`;
+          p += `\u{1F465} ${T.attendees}: ${attendee_emails && attendee_emails.length ? attendee_emails.join(T.listSep) : T.noAttendees}\n`;
           if (occDates && occDates.length > 1) {
-            p += `\u{1F501} \u062a\u06a9\u0631\u0627\u0631: ${recurrence.type} \u2014 ${occDates.length} \u062c\u0644\u0633\u0647\n`;
+            p += `\u{1F501} ${T.recurrence}: ${recurrence.type} \u2014 ${T.nMeetings(occDates.length)}\n`;
             occDates.slice(0, 10).forEach(d => { p += `   \u2022 ${describeDate(d)}\n`; });
-            if (occDates.length > 10) p += `   \u2026 \u0648 ${occDates.length - 10} \u0645\u0648\u0631\u062f \u062f\u06cc\u06af\u0631\n`;
+            if (occDates.length > 10) p += `   \u2026 ${T.andMore(occDates.length - 10)}\n`;
           }
-          p += `\n\u2705 \u0647\u0645\u0647 \u062f\u0631 \u0627\u06cc\u0646 \u0632\u0645\u0627\u0646 \u0622\u0632\u0627\u062f \u0647\u0633\u062a\u0646\u062f.\n`;
-          p += `\n\u26a0\ufe0f \u0627\u06cc\u0646 \u067e\u06cc\u0634\u200c\u0646\u0645\u0627\u06cc\u0634 \u0631\u0627 \u0639\u06cc\u0646\u0627\u064b \u0628\u0647 \u06a9\u0627\u0631\u0628\u0631 \u0646\u0634\u0627\u0646 \u0628\u062f\u0647 \u0648 \u0645\u0646\u062a\u0638\u0631 \u062a\u0623\u06cc\u06cc\u062f \u0635\u0631\u06cc\u062d \u0628\u0645\u0627\u0646. \u0628\u0639\u062f \u0627\u0632 \u062a\u0623\u06cc\u06cc\u062f\u060c \u0647\u0645\u06cc\u0646 \u0627\u0628\u0632\u0627\u0631 \u0631\u0627 \u0628\u0627 confirmed=true \u0635\u062f\u0627 \u0628\u0632\u0646.`;
+          p += `\n\u2705 ${T.allFree}\n`;
+          p += `\n\u26a0\ufe0f ${T.previewFooter}`;
           return p;
         };
 
@@ -2001,18 +2002,18 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
             }
             const roomName = getRoomDisplayName(room_email);
             const hhmm = startTimeStr.substring(0,5) + "\u2013" + endTimeStr.substring(0,5);
-            let msg = `\u274c \u062c\u0644\u0633\u0647 \u062b\u0628\u062a \u0646\u0634\u062f. \u0627\u062a\u0627\u0642 ${roomName} \u062f\u0631 ${verify.missing.length} \u0645\u0648\u0631\u062f \u0627\u0632 ${occDates.length} \u062a\u0627\u0631\u06cc\u062e\u0650 \u0633\u0631\u06cc \u062f\u0631 \u0633\u0627\u0639\u062a ${hhmm} \u0642\u0628\u0648\u0644 \u0646\u06a9\u0631\u062f (\u062a\u062f\u0627\u062e\u0644 \u06cc\u0627 \u0639\u062f\u0645 \u062f\u0633\u062a\u0631\u0633\u06cc):\n`;
+            let msg = `\u274c ${T.roomDeclined(roomName, verify.missing.length, occDates.length, hhmm)}:\n`;
             verify.missing.slice(0, 15).forEach(d => { msg += `  \ud83d\udd34 ${d}\n`; });
-            if (verify.missing.length > 15) msg += `  \u2026 \u0648 ${verify.missing.length - 15} \u0645\u0648\u0631\u062f \u062f\u06cc\u06af\u0631\n`;
+            if (verify.missing.length > 15) msg += `  \u2026 ${T.andMore(verify.missing.length - 15)}\n`;
             msg += rb.rolledBack
-              ? `\n\u0628\u0631\u0627\u06cc \u062c\u0644\u0648\u06af\u06cc\u0631\u06cc \u0627\u0632 \u062c\u0644\u0633\u0647\u200c\u06cc \u0628\u062f\u0648\u0646 \u0627\u062a\u0627\u0642\u060c \u06a9\u0644 \u0633\u0631\u06cc \u0644\u063a\u0648 \u0634\u062f. \u0644\u0637\u0641\u0627\u064b \u0633\u0627\u0639\u062a \u06cc\u0627 \u0627\u062a\u0627\u0642 \u062f\u06cc\u06af\u0631\u06cc \u0627\u0646\u062a\u062e\u0627\u0628 \u06a9\u0646 \u06a9\u0647 \u062f\u0631 \u062a\u0645\u0627\u0645 \u062a\u0627\u0631\u06cc\u062e\u200c\u0647\u0627 \u0622\u0632\u0627\u062f \u0628\u0627\u0634\u062f.`
-              : `\n\u26a0\ufe0f \u0647\u0634\u062f\u0627\u0631: \u062a\u0644\u0627\u0634 \u0628\u0631\u0627\u06cc \u0644\u063a\u0648 \u062e\u0648\u062f\u06a9\u0627\u0631 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062f (${rb.reason}). \u0644\u0637\u0641\u0627\u064b \u062c\u0644\u0633\u0647 \u0631\u0627 \u062f\u0633\u062a\u06cc \u0628\u0631\u0631\u0633\u06cc \u0648 \u062d\u0630\u0641 \u06a9\u0646.`;
+              ? `\n${T.seriesCancelled}`
+              : `\n\u26a0\ufe0f ${T.rollbackFailed(rb.reason)}`;
             return msg;
           }
           return null;
         };
 
-        const unknownMsg = (list) => `\u274c \u0627\u06cc\u0646 \u0622\u062f\u0631\u0633\u200c\u0647\u0627 \u062f\u0631 Exchange \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f\u0646\u062f: ${list.join("\u060c ")}\n\n\u0627\u06cc\u0645\u06cc\u0644 \u0631\u0627 \u0627\u0635\u0644\u0627\u062d \u06a9\u0646 (\u06cc\u0627 \u0628\u0627 search_user \u067e\u06cc\u062f\u0627 \u06a9\u0646) \u0648 \u062f\u0648\u0628\u0627\u0631\u0647 \u062a\u0644\u0627\u0634 \u06a9\u0646. \u0686\u06cc\u0632\u06cc \u062b\u0628\u062a \u0646\u0634\u062f.`;
+        const unknownMsg = (list) => `\u274c ${T.unknownAddresses(list.join(T.listSep))}`;
 
         // ---- RECURRING SERIES ----
         if (recurrence && recurrence.type) {
@@ -2024,10 +2025,10 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
           if (unknown && unknown.length) return { content: [{ type: "text", text: unknownMsg(unknown) }] };
           if (!ok) {
             const hhmm = startTimeStr.substring(0,5) + "\u2013" + endTimeStr.substring(0,5);
-            let msg = `\u274c \u0627\u06cc\u0646 \u062c\u0644\u0633\u0647\u200c\u06cc \u062a\u06a9\u0631\u0627\u0631\u0634\u0648\u0646\u062f\u0647 \u062b\u0628\u062a \u0646\u0634\u062f \u0686\u0648\u0646 \u062f\u0631 ${conflicts.length} \u0645\u0648\u0631\u062f \u0627\u0632 ${checkedCount} \u062c\u0644\u0633\u0647\u060c \u0627\u062a\u0627\u0642 \u06cc\u0627 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u0647 \u062f\u0631 \u0633\u0627\u0639\u062a ${hhmm} \u0645\u0634\u063a\u0648\u0644 \u0627\u0633\u062a:\n`;
-            conflicts.slice(0, 15).forEach(cf => { msg += `  \ud83d\udd34 ${cf.date}: ${cf.busy.map(e => e.includes("room-") ? getRoomDisplayName(e) : e).join("\u060c ")}\n`; });
-            if (conflicts.length > 15) msg += `  \u2026 \u0648 ${conflicts.length - 15} \u0645\u0648\u0631\u062f \u062f\u06cc\u06af\u0631\n`;
-            msg += `\n\u0628\u0631\u0627\u06cc \u0631\u0632\u0631\u0648 \u0645\u0648\u0641\u0642 \u0633\u0631\u06cc\u060c \u0628\u0627\u06cc\u062f \u0633\u0627\u0639\u062a \u06cc\u0627 \u0631\u0648\u0632\u06cc \u0627\u0646\u062a\u062e\u0627\u0628 \u0634\u0648\u062f \u06a9\u0647 \u062f\u0631 \u062a\u0645\u0627\u0645 \u062a\u0627\u0631\u06cc\u062e\u200c\u0647\u0627 \u0622\u0632\u0627\u062f \u0628\u0627\u0634\u062f.`;
+            let msg = `\u274c ${T.seriesConflict(conflicts.length, checkedCount, hhmm)}:\n`;
+            conflicts.slice(0, 15).forEach(cf => { msg += `  \ud83d\udd34 ${cf.date}: ${cf.busy.map(e => e.includes("room-") ? getRoomDisplayName(e) : e).join(T.listSep)}\n`; });
+            if (conflicts.length > 15) msg += `  \u2026 ${T.andMore(conflicts.length - 15)}\n`;
+            msg += `\n${T.seriesConflictHint}`;
             return { content: [{ type: "text", text: msg }] };
           }
           if (!confirmed) return { content: [{ type: "text", text: buildPreview(occDates) }] };
@@ -2038,7 +2039,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
           });
           const rbMsg = await verifyRoomOrRollback(occDates, created);
           if (rbMsg) return { content: [{ type: "text", text: rbMsg }] };
-          return { content: [{ type: "text", text: `\u2705 \u062c\u0644\u0633\u0647\u200c\u06cc \u062a\u06a9\u0631\u0627\u0631\u0634\u0648\u0646\u062f\u0647 "${subject}" \u062b\u0628\u062a \u0634\u062f! (${occDates.length} \u062c\u0644\u0633\u0647)\n\ud83d\udcc5 \u0627\u0632 ${describeDate(date)} \u0633\u0627\u0639\u062a ${start_time} \u062a\u0627 ${endTimeStr.substring(0,5)} (\u0627\u06cc\u0631\u0627\u0646)\n\ud83c\udfe2 \u0627\u062a\u0627\u0642: ${room_email ? getRoomDisplayName(room_email) : "\u0628\u062f\u0648\u0646 \u0627\u062a\u0627\u0642"}\n\ud83d\udc65 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u06af\u0627\u0646: ${attendee_emails.join(", ") || "\u0628\u062f\u0648\u0646 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u0647"}` }] };
+          return { content: [{ type: "text", text: `\u2705 ${T.seriesBooked(subject, occDates.length)}\n\ud83d\udcc5 ${T.from} ${describeDate(date)} ${T.at} ${start_time} ${T.to} ${endTimeStr.substring(0,5)} (${T.iran})\n\ud83c\udfe2 ${T.room}: ${room_email ? getRoomDisplayName(room_email) : T.noRoom}\n\ud83d\udc65 ${T.attendees}: ${attendee_emails.join(", ") || T.noAttendees}` }] };
         }
 
         // ---- SINGLE MEETING ----
@@ -2089,11 +2090,11 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         const freshAvail = await getAvailability(checkEmails, dayStart, dayEnd);
         const freshBusy = checkEmails.filter(email => isBusy(requestedSlot, freshAvail[email] || []));
         if (freshBusy.length > 0) {
-          let out = `\u274c \u062a\u063a\u06cc\u06cc\u0631 \u0648\u0636\u0639\u06cc\u062a: \u0627\u06cc\u0646 \u0632\u0645\u0627\u0646 \u062f\u06cc\u06af\u0631 \u0622\u0632\u0627\u062f \u0646\u06cc\u0633\u062a.\n\n\u0628\u06cc\u0632\u06cc:\n`;
+          let out = `\u274c ${T.noLongerFree}\n\n${T.busyLabel}:\n`;
           freshBusy.forEach(email => { out += `  \ud83d\udd34 ${email.includes("room-") ? getRoomDisplayName(email) : email}\n`; });
           const newFreeSlots = findFreeSlots(date, (() => { const pa = {}; for (const e of Object.keys(freshAvail).filter(e => !e.includes("room-"))) pa[e] = freshAvail[e] || []; return pa; })());
           if (newFreeSlots.length) {
-            out += `\n\u2705 \u0627\u0633\u0644\u0627\u062a\u200c\u0647\u0627\u06cc \u0622\u0632\u0627\u062f:\n`;
+            out += `\n\u2705 ${T.freeSlots}:\n`;
             newFreeSlots.forEach(sl => { out += `  \u2022 ${formatSlot(sl)}\n`; });
           }
           return { content: [{ type: "text", text: out }] };
@@ -2104,7 +2105,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         });
         const rbMsg = await verifyRoomOrRollback([date], created);
         if (rbMsg) return { content: [{ type: "text", text: rbMsg }] };
-        return { content: [{ type: "text", text: `\u2705 \u062c\u0644\u0633\u0647 "${subject}" \u062b\u0628\u062a \u0634\u062f!\n\ud83d\udcc5 ${describeDate(date)} \u0633\u0627\u0639\u062a ${start_time} \u062a\u0627 ${endTimeStr.substring(0,5)} (\u0627\u06cc\u0631\u0627\u0646)\n\ud83c\udfe2 \u0627\u062a\u0627\u0642: ${room_email ? getRoomDisplayName(room_email) : "\u0628\u062f\u0648\u0646 \u0627\u062a\u0627\u0642"}\n\ud83d\udc65 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u06af\u0627\u0646: ${attendee_emails.join(", ") || "\u0628\u062f\u0648\u0646 \u0634\u0631\u06a9\u062a\u200c\u06a9\u0646\u0646\u062f\u0647"}` }] };
+        return { content: [{ type: "text", text: `\u2705 ${T.booked(subject)}\n\ud83d\udcc5 ${describeDate(date)} ${T.at} ${start_time} ${T.to} ${endTimeStr.substring(0,5)} (${T.iran})\n\ud83c\udfe2 ${T.room}: ${room_email ? getRoomDisplayName(room_email) : T.noRoom}\n\ud83d\udc65 ${T.attendees}: ${attendee_emails.join(", ") || T.noAttendees}` }] };
       } catch (e) { return { content: [{ type: "text", text: `\u274c ${e.message}` }] }; }
     }
   );
@@ -2137,8 +2138,8 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
           if (e.attendees && e.attendees.length) {
             const req = e.attendees.filter(a => a.type === "required");
             const opt = e.attendees.filter(a => a.type === "optional");
-            if (req.length) line += `   👥 شرکت‌کنندگان: ${req.map(a => `${a.name} <${a.email}>`).join(", ")}\n`;
-            if (opt.length) line += `   👁 اختیاری: ${opt.map(a => `${a.name} <${a.email}>`).join(", ")}\n`;
+            if (req.length) line += `   👥 ${T.attendees}: ${req.map(a => `${a.name} <${a.email}>`).join(", ")}\n`;
+            if (opt.length) line += `   👁 ${T.optional}: ${opt.map(a => `${a.name} <${a.email}>`).join(", ")}\n`;
           }
           line += `   ID: ${e.id}\n   ChangeKey: ${e.changeKey}`;
           return line;
@@ -2150,7 +2151,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
 
   // ── delete_event ──
   server.tool("delete_event",
-    "Delete a calendar event. CRITICAL: If event is part of a recurring series, ALWAYS ask user first: فقط این جلسه، این و بعدی‌ها، یا کل سری؟ — NEVER auto-delete series without asking. For single non-recurring events: delete immediately after user confirmation.",
+    `Delete a calendar event. CRITICAL: If event is part of a recurring series, ALWAYS ask user first: ${T.deleteScopeQuestion} — NEVER auto-delete series without asking. For single non-recurring events: delete immediately after user confirmation.`,
     {
       session_token: z.string().optional().optional(),
       item_id: z.string(),
@@ -2165,9 +2166,9 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
       const userEmail = payload.email;
       try {
         await deleteEvent(userEmail, { itemId: item_id, changeKey: change_key, affectedOccurrences: recurrence_action || "AllOccurrences" });
-        const msg = recurrence_action === "SpecifiedOccurrenceOnly" ? "✅ این جلسه حذف شد." :
-                    recurrence_action === "AllFollowingOccurrences" ? "✅ این جلسه و تمام جلسات بعدی حذف شدند." :
-                    "✅ کل سری جلسات حذف شد.";
+        const msg = recurrence_action === "SpecifiedOccurrenceOnly" ? `✅ ${T.deletedOne}` :
+                    recurrence_action === "AllFollowingOccurrences" ? `✅ ${T.deletedFollowing}` :
+                    `✅ ${T.deletedAll}`;
         return { content: [{ type: "text", text: msg }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
@@ -2200,7 +2201,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
           const validRoom = validateRoomEmail(room_email);
           if (validRoom === null) {
             const roomList = Object.entries(ROOM_NAMES).map(([e,n]) => `  • ${n} — ${e}`).join('\n');
-            return { content: [{ type: "text", text: `❌ ایمیل اتاق نامعتبر: "${room_email}"\n\nاتاق‌های موجود:\n${roomList}` }] };
+            return { content: [{ type: "text", text: `❌ ${T.invalidRoom(room_email)}:\n${roomList}` }] };
           }
           if (validRoom !== room_email) room_email = validRoom;
           const roomAccess = await canUserBookRoom(room_email, userEmail);
@@ -2283,12 +2284,12 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         }
         await updateEvent(userEmail, { itemId: item_id, changeKey: change_key, subject, start, end, location: room_email, roomEmail: room_email, body, attendeeEmails: finalAttendees, affectedOccurrences: recurrence_action || 'AllOccurrences' });
         const changed = [];
-        if (subject) changed.push(`موضوع: ${subject}`);
-        if (start) changed.push(`شروع: ${start}`);
-        if (end) changed.push(`پایان: ${end}`);
-        if (room_email) changed.push(`اتاق جدید: ${room_email}`);
-        if (body) changed.push("توضیحات آپدیت شد");
-        return { content: [{ type: "text", text: `✅ جلسه آپدیت شد.\n${changed.join("\n")}` }] };
+        if (subject) changed.push(`${T.subject}: ${subject}`);
+        if (start) changed.push(`${T.start}: ${start}`);
+        if (end) changed.push(`${T.end}: ${end}`);
+        if (room_email) changed.push(`${T.newRoom}: ${room_email}`);
+        if (body) changed.push(T.bodyUpdated);
+        return { content: [{ type: "text", text: `✅ ${T.eventUpdated}\n${changed.join("\n")}` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
   );
@@ -2346,13 +2347,13 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         let out = `👥 Group: ${group_email}\n`;
         out += `👤 Members (${members.length}): ${members.map(m => m.name).join(", ")}\n`;
         out += `🏢 Room: ${room_email}\n`;
-        out += `📅 ${date} ${start_time} (${duration_minutes} دقیقه)\n\n`;
+        out += `📅 ${date} ${start_time} (${T.minutes(duration_minutes)})\n\n`;
 
         if (busyMembers.length === 0 && !roomBusy) {
-          out += `✅ همه اعضا و اتاق در این زمان آزاد هستند.\n`;
+          out += `✅ ${T.groupAllFree}\n`;
         } else {
           if (busyMembers.length > 0) {
-            out += `🔴 مشغول (${busyMembers.length} نفر):\n`;
+            out += `🔴 ${T.busy} (${T.nPeople(busyMembers.length)}):\n`;
             busyMembers.forEach(e => {
               const name = members.find(m => m.email === e)?.name || e;
               const busyTimes = (avail[e] || []).map(b => `${formatDateTime(b.start)}→${formatDateTime(b.end)}`).join(", ");
@@ -2361,11 +2362,11 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
           }
           if (roomBusy) {
             const roomTimes = (avail[room_email] || []).map(b => `${formatDateTime(b.start)}→${formatDateTime(b.end)}`).join(", ");
-            out += `🔴 اتاق مشغول: ${roomTimes}\n`;
+            out += `🔴 ${T.roomBusy}: ${roomTimes}\n`;
           }
           const freeMembers = memberEmails.filter(e => !busyMembers.includes(e));
           if (freeMembers.length > 0) {
-            out += `\n✅ آزاد (${freeMembers.length} نفر):\n`;
+            out += `\n✅ ${T.free} (${T.nPeople(freeMembers.length)}):\n`;
             freeMembers.forEach(e => {
               const name = members.find(m => m.email === e)?.name || e;
               out += `  • ${name}\n`;
@@ -2377,15 +2378,15 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
             return slDuration >= duration_minutes;
           });
           if (freeSlots.length) {
-            out += `\n📅 اسلات‌های مشترک آزاد در ${date}:\n`;
+            out += `\n📅 ${T.commonFreeSlotsOn(date)}:\n`;
             freeSlots.forEach(sl => { out += `  • ${formatSlot(sl)}\n`; });
           } else {
-            out += `\n❌ هیچ اسلات مشترک آزادی در ${date} پیدا نشد.\n`;
+            out += `\n❌ ${T.noCommonSlots(date)}\n`;
           }
         }
 
         if (!confirmed) {
-          out += `\nبرای رزرو این جلسه برای همه اعضا، تایید کنید تا با confirmed=true دوباره فراخوانی شود.`;
+          out += `\n${T.groupConfirmHint}`;
           return { content: [{ type: "text", text: out }] };
         }
 
@@ -2393,14 +2394,14 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
         const freshAvail = await getAvailability( allEmails, `${date}T00:00:00`, `${date}T23:59:59`);
         const freshBusy = allEmails.filter(e => isBusy(requestedSlot, freshAvail[e] || []));
         if (freshBusy.length > 0) {
-          let errOut = `❌ تغییر وضعیت: این زمان دیگر آزاد نیست.\n\nمشغول:\n`;
+          let errOut = `❌ ${T.noLongerFree}\n\n${T.busy}:\n`;
           freshBusy.forEach(e => {
             const name = members.find(m => m.email === e)?.name || e;
             errOut += `  🔴 ${name} <${e}>\n`;
           });
           const newFreeSlots = findFreeSlots(date, (() => { const pa = {}; for (const e of Object.keys(freshAvail).filter(e => !e.includes("room-"))) pa[e] = freshAvail[e] || []; return pa; })());
           if (newFreeSlots.length) {
-            errOut += `\n✅ اسلات‌های آزاد:\n`;
+            errOut += `\n✅ ${T.freeSlots}:\n`;
             newFreeSlots.forEach(sl => { errOut += `  • ${formatSlot(sl)}\n`; });
           }
           return { content: [{ type: "text", text: errOut }] };
@@ -2413,7 +2414,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
 
         const endHStr = pad(Math.floor(endTotalMin / 60) % 24);
         const endMStr = pad(endTotalMin % 60);
-        return { content: [{ type: "text", text: `✅ جلسه "${subject}" برای گروه ثبت شد!\n📅 ${date} ساعت ${start_time} تا ${endHStr}:${endMStr} (ایران)\n🏢 اتاق: ${room_email}\n👥 اعضا (${members.length}): ${members.map(m => m.name).join(", ")}` }] };
+        return { content: [{ type: "text", text: `✅ ${T.groupBooked(subject)}\n📅 ${date} ${T.at} ${start_time} ${T.to} ${endHStr}:${endMStr} (${T.iran})\n🏢 ${T.room}: ${room_email}\n👥 ${T.members} (${members.length}): ${members.map(m => m.name).join(", ")}` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
   );
@@ -2598,7 +2599,7 @@ NEVER say "ابزار recurring ندارم" — smart_schedule HAS recurrence pa
     "Logout and invalidate session.",
     { session_token: z.string().optional() },
     async ({ session_token }) => {
-      return { content: [{ type: "text", text: "✅ خارج شدی." }] };
+      return { content: [{ type: "text", text: T.loggedOut }] };
     }
   );
 

@@ -1,0 +1,126 @@
+// Persian (Farsi) user-facing strings. Keys must match locales/en.js.
+export default {
+  dir: "rtl",
+  lang: "fa",
+
+  // dates
+  weekdays: ["یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه"],
+  today: "امروز",
+  tomorrow: "فردا",
+  yesterday: "دیروز",
+  inDays: n => n + " روز دیگر",
+  daysAgo: n => n + " روز پیش",
+
+  // model instructions / tool descriptions (phrases users may type)
+  instr: {
+    relativeNote: "or their Persian equivalents",
+    roomExamples: '"تو اتاق A1", "اتاق B1"',
+    askRoom: "می‌خوای اتاق هم رزرو کنم؟",
+    confirmWords: '"بله", "آره", "ok", "yes", "تایید"',
+    vagueWords: '"همون" or "نک"',
+    teamPhrases: '"تیم X" or "زیرمجموعه X"',
+    recurringPhrases: '"هر هفته", "هفتگی", "هر روز", "ماهانه", "تکرارشونده", "recurring"',
+    noRecurring: "ابزار recurring ندارم",
+    dayWords: '"امشب", "امروز", "فردا"',
+  },
+  deleteScopeQuestion: "فقط این جلسه، این و بعدی‌ها، یا کل سری؟",
+  searchExample: "e.g. علی محمدی or ali",
+  directReportsTriggers: "'زیرمجموعه X', 'کسانی که مدیرشون X هست', 'تیم X'",
+  managerTriggers: "'مدیرم کیه', 'مدیر X کیه'",
+
+  // common labels
+  subject: "موضوع",
+  date: "تاریخ",
+  time: "ساعت",
+  at: "ساعت",
+  from: "از",
+  to: "تا",
+  iran: "ایران",
+  room: "اتاق",
+  noRoom: "بدون اتاق",
+  attendees: "شرکت‌کنندگان",
+  noAttendees: "بدون شرکت‌کننده",
+  optional: "اختیاری",
+  members: "اعضا",
+  listSep: "، ",
+  free: "آزاد",
+  busy: "مشغول",
+  busyLabel: "بیزی",
+  start: "شروع",
+  end: "پایان",
+  newRoom: "اتاق جدید",
+  recurrence: "تکرار",
+  nMeetings: n => `${n} جلسه`,
+  nPeople: n => `${n} نفر`,
+  minutes: n => `${n} دقیقه`,
+  andMore: n => `و ${n} مورد دیگر`,
+  checkFailed: "(بررسی ناموفق بود)",
+  loggedOut: "✅ خارج شدی.",
+
+  // rooms and access
+  roomUnavailable: "این اتاق در دسترس نیست.",
+  roomNoAccess: r => "متاسفانه شما به اتاق " + r + " دسترسی ندارید. برای دسترسی با IT تماس بگیرید.",
+  freeAccessibleRooms: "اتاق‌های در دسترس شما که در این بازه آزادند",
+  roomDeniedHint: "این اتاق نباید در پیش‌نمایش رزرو نشان داده می‌شد — پیش از رزرو دسترسی را با list_rooms بررسی کن.",
+  roomAccessYes: "دسترسی دارید — قابل رزرو",
+  roomAccessNo: "دسترسی ندارید — با IT تماس بگیرید",
+  roomsHeader: n => `${n} اتاق (وضعیت دسترسی شما بر اساس عضویت گروه AD)`,
+  roomsFooter: "✅ یعنی قطعاً دسترسی رزرو دارید — نیازی به تست رزرو نیست. 🔒 یعنی قطعاً دسترسی ندارید.",
+  invalidRoom: r => `ایمیل اتاق نامعتبر: "${r}"\n\nاتاق‌های موجود`,
+
+  // search_user
+  userNotFound: q => `هیچ کاربری با نام "${q}" پیدا نشد. نام را با فرمت دیگری امتحان کنید.`,
+  userFound: (n, e) => `✅ یافت شد: ${n} <${e}>\n💡 برای یافتن زیرمجموعه‌ها، get_direct_reports را با manager_email: ${e} فراخوانی کنید.`,
+  tooManyUsers: n => `${n} نفر یافت شد — فقط ۱۰ نفر اول نشان داده شد. نام دقیق‌تری وارد کنید.`,
+  usersFound: n => `${n} کاربر یافت شد`,
+  whichOne: "کدام یکی؟",
+
+  // check_availability
+  availRoomsHeader: "اتاق‌ها (وضعیت دسترسی این کاربر بر اساس LDAP)",
+  availNoAccess: "دسترسی ندارید (پیشنهاد نده)",
+  availFree: "آزاد و قابل رزرو",
+  commonFreeSlots: "اسلات‌های مشترک آزاد",
+  commonFreeSlotsOn: d => `اسلات‌های مشترک آزاد در ${d}`,
+  noCommonSlots: d => `هیچ اسلات مشترک آزادی در ${d} پیدا نشد.`,
+  availFooter: "فقط اتاق‌های ✅ را پیشنهاد بده. اتاق‌های 🔒 را هرگز پیشنهاد نده و درباره دسترسی هیچ اتاقی فرض نکن — این لیست تنها منبع حقیقت است.",
+  freeSlots: "اسلات‌های آزاد",
+
+  // smart_schedule
+  badTime: t => `فرمت ساعت نامعتبر: "${t}" — ساعت را به شکل HH:MM بفرست (مثلاً 09:30).`,
+  badDate: d => `فرمت تاریخ نامعتبر: "${d}" — تاریخ را به شکل YYYY-MM-DD بفرست.`,
+  badDuration: "مدت جلسه باید بیشتر از صفر دقیقه باشد.",
+  crossesMidnight: "جلسه نمی‌تواند از نیمه‌شب عبور کند — ساعت شروع یا مدت را کم کن.",
+  pastTime: (dt, today) => `زمان انتخابی (${dt}) گذشته است. امروز ${today} است. لطفاً زمان آینده‌ای انتخاب کنید.`,
+  previewTitle: "پیش‌نمایش — هنوز چیزی ثبت نشده و دعوت‌نامه‌ای ارسال نشده.",
+  allFree: "همه در این زمان آزاد هستند.",
+  previewFooter: "این پیش‌نمایش را عیناً به کاربر نشان بده و منتظر تأیید صریح بمان. بعد از تأیید، همین ابزار را با confirmed=true صدا بزن.",
+  roomDeclined: (room, missing, total, hhmm) => `جلسه ثبت نشد. اتاق ${room} در ${missing} مورد از ${total} تاریخِ سری در ساعت ${hhmm} قبول نکرد (تداخل یا عدم دسترسی)`,
+  seriesCancelled: "برای جلوگیری از جلسه‌ی بدون اتاق، کل سری لغو شد. لطفاً ساعت یا اتاق دیگری انتخاب کن که در تمام تاریخ‌ها آزاد باشد.",
+  rollbackFailed: r => `هشدار: تلاش برای لغو خودکار ناموفق بود (${r}). لطفاً جلسه را دستی بررسی و حذف کن.`,
+  unknownAddresses: l => `این آدرس‌ها در Exchange پیدا نشدند: ${l}\n\nایمیل را اصلاح کن (یا با search_user پیدا کن) و دوباره تلاش کن. چیزی ثبت نشد.`,
+  seriesConflict: (c, n, h) => `این جلسه‌ی تکرارشونده ثبت نشد چون در ${c} مورد از ${n} جلسه، اتاق یا شرکت‌کننده در ساعت ${h} مشغول است`,
+  seriesConflictHint: "برای رزرو موفق سری، باید ساعت یا روزی انتخاب شود که در تمام تاریخ‌ها آزاد باشد.",
+  seriesBooked: (s, n) => `جلسه‌ی تکرارشونده "${s}" ثبت شد! (${n} جلسه)`,
+  noLongerFree: "تغییر وضعیت: این زمان دیگر آزاد نیست.",
+  booked: s => `جلسه "${s}" ثبت شد!`,
+
+  // delete / update
+  deletedOne: "این جلسه حذف شد.",
+  deletedFollowing: "این جلسه و تمام جلسات بعدی حذف شدند.",
+  deletedAll: "کل سری جلسات حذف شد.",
+  bodyUpdated: "توضیحات آپدیت شد",
+  eventUpdated: "جلسه آپدیت شد.",
+
+  // book_for_group
+  groupAllFree: "همه اعضا و اتاق در این زمان آزاد هستند.",
+  roomBusy: "اتاق مشغول",
+  groupConfirmHint: "برای رزرو این جلسه برای همه اعضا، تایید کنید تا با confirmed=true دوباره فراخوانی شود.",
+  groupBooked: s => `جلسه "${s}" برای گروه ثبت شد!`,
+
+  // login-server pages
+  loginOkTitle: "ورود موفق",
+  loginOkText: "برگردید به Claude و دوباره امتحان کنید.",
+  logoutTitle: "خروج موفق",
+  logoutHeading: "با موفقیت خارج شدید",
+  logoutText: "می‌توانید این صفحه را ببندید و به Claude برگردید.",
+};

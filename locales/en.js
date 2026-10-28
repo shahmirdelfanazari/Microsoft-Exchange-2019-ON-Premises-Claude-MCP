@@ -1,0 +1,126 @@
+// English user-facing strings. Keys must match locales/fa.js.
+export default {
+  dir: "ltr",
+  lang: "en",
+
+  // dates
+  weekdays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  today: "today",
+  tomorrow: "tomorrow",
+  yesterday: "yesterday",
+  inDays: n => `in ${n} days`,
+  daysAgo: n => `${n} days ago`,
+
+  // model instructions / tool descriptions (phrases users may type)
+  instr: {
+    relativeNote: "or their equivalents in the user's language",
+    roomExamples: '"in room A1", "room B1"',
+    askRoom: "Should I book a room too?",
+    confirmWords: '"yes", "ok", "confirm", "go ahead"',
+    vagueWords: '"the same" or "just do it"',
+    teamPhrases: '"X\'s team" or "people under X"',
+    recurringPhrases: '"every week", "weekly", "every day", "monthly", "recurring"',
+    noRecurring: "I can't create recurring meetings",
+    dayWords: '"tonight", "today", "tomorrow"',
+  },
+  deleteScopeQuestion: "Only this meeting, this and all following ones, or the whole series?",
+  searchExample: "e.g. Jane Smith or jane",
+  directReportsTriggers: "'who reports to X', 'my team'",
+  managerTriggers: "'who is X's manager'",
+
+  // common labels
+  subject: "Subject",
+  date: "Date",
+  time: "Time",
+  at: "at",
+  from: "from",
+  to: "–",
+  iran: "Iran time",
+  room: "Room",
+  noRoom: "no room",
+  attendees: "Attendees",
+  noAttendees: "no attendees",
+  optional: "Optional",
+  members: "Members",
+  listSep: ", ",
+  free: "Free",
+  busy: "Busy",
+  busyLabel: "Busy",
+  start: "Start",
+  end: "End",
+  newRoom: "New room",
+  recurrence: "Recurrence",
+  nMeetings: n => `${n} meetings`,
+  nPeople: n => `${n} people`,
+  minutes: n => `${n} min`,
+  andMore: n => `and ${n} more`,
+  checkFailed: "(could not be checked)",
+  loggedOut: "✅ Logged out.",
+
+  // rooms and access
+  roomUnavailable: "This room is not available.",
+  roomNoAccess: r => `Sorry, you don't have access to room ${r}. Contact IT to request access.`,
+  freeAccessibleRooms: "Rooms you can book that are free at this time",
+  roomDeniedHint: "This room should not have been shown in a booking preview — check access with list_rooms before booking.",
+  roomAccessYes: "you have access — bookable",
+  roomAccessNo: "no access — contact IT",
+  roomsHeader: n => `${n} rooms (your access, based on AD group membership)`,
+  roomsFooter: "✅ means you definitely can book it — no need to test-book. 🔒 means you definitely cannot.",
+  invalidRoom: r => `Invalid room email: "${r}"\n\nAvailable rooms`,
+
+  // search_user
+  userNotFound: q => `No user found matching "${q}". Try a different spelling.`,
+  userFound: (n, e) => `✅ Found: ${n} <${e}>\n💡 To find their direct reports, call get_direct_reports with manager_email: ${e}.`,
+  tooManyUsers: n => `${n} people found — only the first 10 are shown. Enter a more specific name.`,
+  usersFound: n => `${n} users found`,
+  whichOne: "Which one?",
+
+  // check_availability
+  availRoomsHeader: "Rooms (this user's access, based on LDAP)",
+  availNoAccess: "no access (do not suggest)",
+  availFree: "free and bookable",
+  commonFreeSlots: "Common free slots",
+  commonFreeSlotsOn: d => `Common free slots on ${d}`,
+  noCommonSlots: d => `No common free slot found on ${d}.`,
+  availFooter: "Only suggest ✅ rooms. Never suggest 🔒 rooms and never assume anything about room access — this list is the only source of truth.",
+  freeSlots: "Free slots",
+
+  // smart_schedule
+  badTime: t => `Invalid time format: "${t}" — send the time as HH:MM (e.g. 09:30).`,
+  badDate: d => `Invalid date format: "${d}" — send the date as YYYY-MM-DD.`,
+  badDuration: "Meeting duration must be greater than zero minutes.",
+  crossesMidnight: "A meeting cannot cross midnight — move the start time or shorten it.",
+  pastTime: (dt, today) => `The selected time (${dt}) is in the past. Today is ${today}. Please choose a future time.`,
+  previewTitle: "Preview — nothing has been booked and no invitations have been sent yet.",
+  allFree: "Everyone is free at this time.",
+  previewFooter: "Show this preview to the user exactly as is and wait for explicit approval. After approval, call this tool again with confirmed=true.",
+  roomDeclined: (room, missing, total, hhmm) => `Meeting not booked. Room ${room} declined ${missing} of ${total} dates in the series at ${hhmm} (conflict or no access)`,
+  seriesCancelled: "To avoid a meeting without a room, the whole series was cancelled. Please choose a time or room that is free on every date.",
+  rollbackFailed: r => `Warning: automatic cancellation failed (${r}). Please check and delete the meeting manually.`,
+  unknownAddresses: l => `These addresses were not found in Exchange: ${l}\n\nCorrect the email (or find it with search_user) and try again. Nothing was booked.`,
+  seriesConflict: (c, n, h) => `This recurring meeting was not booked because the room or an attendee is busy at ${h} on ${c} of ${n} dates`,
+  seriesConflictHint: "To book the series, choose a time or day that is free on every date.",
+  seriesBooked: (s, n) => `Recurring meeting "${s}" booked! (${n} meetings)`,
+  noLongerFree: "Status changed: this time is no longer free.",
+  booked: s => `Meeting "${s}" booked!`,
+
+  // delete / update
+  deletedOne: "This meeting was deleted.",
+  deletedFollowing: "This meeting and all following meetings were deleted.",
+  deletedAll: "The whole series was deleted.",
+  bodyUpdated: "Description updated",
+  eventUpdated: "Meeting updated.",
+
+  // book_for_group
+  groupAllFree: "All members and the room are free at this time.",
+  roomBusy: "Room busy",
+  groupConfirmHint: "To book this meeting for all members, confirm so it is called again with confirmed=true.",
+  groupBooked: s => `Meeting "${s}" booked for the group!`,
+
+  // login-server pages
+  loginOkTitle: "Signed in",
+  loginOkText: "Go back to Claude and try again.",
+  logoutTitle: "Signed out",
+  logoutHeading: "You have been signed out",
+  logoutText: "You can close this page and return to Claude.",
+};

@@ -1,9 +1,9 @@
 {
   "rooms": [
-    { "email": "room-a1@example.com", "name": "A1 (6-8 نفر)" },
-    { "email": "room-a2@example.com", "name": "A2 (2 نفر)" },
-    { "email": "room-b1@example.com", "name": "B1 (2-4 نفر)" },
-    { "email": "room-exec@example.com", "name": "Exec (2 نفر)" }
+    { "email": "room-a1@example.com", "name": "A1 (6-8 people)" },
+    { "email": "room-a2@example.com", "name": "A2 (2 people)" },
+    { "email": "room-b1@example.com", "name": "B1 (2-4 people)" },
+    { "email": "room-exec@example.com", "name": "Exec (2 people)" }
   ],
   "restricted": {
     "room-exec@example.com": "exec-room@example.com"
