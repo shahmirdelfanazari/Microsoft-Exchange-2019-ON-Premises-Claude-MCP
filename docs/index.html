@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exchange 2019 Claude MCP</title>
+<meta name="description" content="Open-source MCP server that connects Claude to on-premises Microsoft Exchange 2019 (EWS) and Active Directory: meeting-room booking, free/busy, calendar and email, with Keycloak / OpenID Connect sign-in.">
+<meta name="keywords" content="MCP, Model Context Protocol, Claude, Microsoft Exchange 2019, Exchange on-premises, EWS, Active Directory, LDAP, Keycloak, OpenID Connect, meeting room booking, calendar, open source">
+<link rel="canonical" href="https://shahmirdelfanazari.github.io/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Microsoft Exchange 2019 On-Premises Claude MCP">
+<meta property="og:description" content="Connect Claude to on-premises Exchange 2019 and Active Directory. Book rooms, check free/busy, manage calendar and email in plain language.">
+<meta property="og:url" content="https://shahmirdelfanazari.github.io/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/">
+<meta name="twitter:card" content="summary">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "Microsoft Exchange 2019 On-Premises Claude MCP",
+  "description": "MCP server that connects Claude to on-premises Microsoft Exchange 2019 (EWS) and Active Directory: meeting-room booking, free/busy, calendar and email.",
+  "codeRepository": "https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP",
+  "programmingLanguage": "JavaScript",
+  "runtimePlatform": "Node.js 20",
+  "license": "https://opensource.org/licenses/MIT",
+  "version": "2.0.0",
+  "author": { "@type": "Person", "name": "Shahmir Delfan Azari" },
+  "keywords": "MCP, Claude, Microsoft Exchange, EWS, Active Directory, Keycloak"
+}
+</script>
+<style>
+  :root {
+    --bg: #fbfaf8; --surface: #ffffff; --text: #1d1d1f; --muted: #5f6368;
+    --border: #e4e2dd; --accent: #0f6cbd; --accent-soft: #e8f1fb; --code-bg: #f3f2ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416; --surface: #1c1c1f; --text: #ececee; --muted: #a2a5ab;
+      --border: #2e2e33; --accent: #5aa9f0; --accent-soft: #1b2a3a; --code-bg: #232327;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --surface: #1c1c1f; --text: #ececee; --muted: #a2a5ab;
+    --border: #2e2e33; --accent: #5aa9f0; --accent-soft: #1b2a3a; --code-bg: #232327;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 16px 72px; }
+  h1 { font-size: clamp(1.8rem, 4.5vw, 2.6rem); line-height: 1.15; margin: 0 0 16px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.3rem; margin: 48px 0 12px; }
+  p.lead { font-size: 1.15rem; color: var(--muted); margin: 0 0 28px; max-width: 680px; }
+  a { color: var(--accent); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none;
+    font-weight: 600; border: 1px solid var(--border); color: var(--text); background: var(--surface);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 1rem; }
+  .card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .ask { background: var(--accent-soft); border-radius: 10px; padding: 14px 18px; margin: 0; list-style: none; }
+  .ask li { padding: 4px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.9rem; }
+  td code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; line-height: 1.9; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+  @media (max-width: 560px) { main { padding-top: 32px; } th { white-space: normal; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Microsoft Exchange 2019 On-Premises Claude MCP</h1>
+  <p class="lead">An open-source <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server that connects Claude to <strong>on-premises Microsoft Exchange</strong> (EWS) and <strong>Active Directory</strong>. Book meeting rooms, check colleagues' free/busy, manage calendar events and handle email in plain language, in English or Persian.</p>
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP">View on GitHub</a>
+    <a class="btn" href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP#setup">Setup guide</a>
+  </div>
+
+  <h2>Just ask Claude</h2>
+  <ul class="ask">
+    <li>📅 "Book a meeting room for my team tomorrow at 10"</li>
+    <li>👥 "When are Ali and Sara both free this week?"</li>
+    <li>📧 "Show my unread emails and reply to the last one"</li>
+  </ul>
+
+  <h2>Built for production</h2>
+  <div class="grid">
+    <div class="card"><h3>Two-step booking</h3><p>Claude shows a preview first. Nothing is booked until the user confirms, and free/busy is checked again on confirm.</p></div>
+    <div class="card"><h3>Room verification</h3><p>After booking, the server checks that the room accepted the meeting, and rolls the booking back if it declined.</p></div>
+    <div class="card"><h3>Single sign-on</h3><p>Users sign in with OpenID Connect (tested with Keycloak). User passwords never reach the server.</p></div>
+    <div class="card"><h3>Room access control</h3><p>Restrict rooms to Active Directory groups, including nested groups. The check fails closed.</p></div>
+    <div class="card"><h3>Recurring meetings</h3><p>Daily, weekly and monthly series, with availability checked for every occurrence.</p></div>
+    <div class="card"><h3>Configurable</h3><p>All organization data lives in <code>.env</code> and <code>rooms.json</code>. English and Persian interface.</p></div>
+  </div>
+
+  <h2>22 tools</h2>
+  <table>
+    <tr><th>Calendar</th><td><code>smart_schedule</code> <code>check_availability</code> <code>list_events</code> <code>update_event</code> <code>delete_event</code> <code>list_rooms</code> <code>get_current_time</code></td></tr>
+    <tr><th>Team / group</th><td><code>book_meeting_with_team</code> <code>book_meeting_with_direct_reports</code> <code>book_for_group</code></td></tr>
+    <tr><th>Directory</th><td><code>search_user</code> <code>get_manager</code> <code>get_direct_reports</code> <code>resolve_team</code> <code>resolve_group</code></td></tr>
+    <tr><th>Email</th><td><code>list_emails</code> <code>read_email</code> <code>send_email</code> <code>reply_email</code> <code>send_email_to_team</code> <code>get_attachments</code></td></tr>
+    <tr><th>Session</th><td><code>logout</code></td></tr>
+  </table>
+
+  <h2>Quick start</h2>
+<pre><code>git clone https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP.git
+cd Microsoft-Exchange-2019-ON-Premises-Claude-MCP
+npm install
+cp .env.example .env              # fill in your values
+cp rooms.example.json rooms.json  # list your room mailboxes
+npm start</code></pre>
+  <p>Requirements: Node.js 20+, Exchange 2016/2019 with EWS, a service account with ApplicationImpersonation, an OIDC provider and a TLS reverse proxy. Then connect Claude Code with <code>claude mcp add exchange --transport http https://your-server/mcp</code>, or add a custom connector in claude.ai / Claude Desktop.</p>
+
+  <footer>
+    MIT licensed · by Shahmir Delfan Azari ·
+    <a href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/blob/main/SECURITY.md">Security policy</a>
+  </footer>
+</main>
+</body>
+</html>
