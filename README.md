@@ -112,3 +112,5 @@ Read [SECURITY.md](SECURITY.md) before deploying. In short: the service account 
 ## License
 
 [MIT](LICENSE)
+
+Independent open-source project, not affiliated with or endorsed by Microsoft or Anthropic. Exchange and Active Directory are trademarks of Microsoft Corporation; Claude is a trademark of Anthropic.

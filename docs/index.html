@@ -5,27 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google-site-verification" content="mmgxhMVowUgeS0M0I5VIHAQP2y2NRIOTFrhq5mqOUIg" />
 <title>Exchange 2019 Claude MCP</title>
-<meta name="description" content="Open-source MCP server that connects Claude to on-premises Microsoft Exchange 2019 (EWS) and Active Directory: meeting-room booking, free/busy, calendar and email, with Keycloak / OpenID Connect sign-in.">
-<meta name="keywords" content="MCP, Model Context Protocol, Claude, Microsoft Exchange 2019, Exchange on-premises, EWS, Active Directory, LDAP, Keycloak, OpenID Connect, meeting room booking, calendar, open source">
+<meta name="description" content="Open-source developer project: an MCP server that connects Claude to a self-hosted Exchange 2019 server (EWS) and Active Directory for meeting-room booking, free/busy and calendar. Source code on GitHub.">
+<meta name="keywords" content="MCP, Model Context Protocol, Claude, Exchange 2019, Exchange on-premises, EWS, Active Directory, LDAP, Keycloak, OpenID Connect, meeting room booking, calendar, open source">
 <link rel="canonical" href="https://shahmirdelfanazari.github.io/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Microsoft Exchange 2019 On-Premises Claude MCP">
-<meta property="og:description" content="Connect Claude to on-premises Exchange 2019 and Active Directory. Book rooms, check free/busy, manage calendar and email in plain language.">
+<meta property="og:title" content="Exchange 2019 Claude MCP (open source)">
+<meta property="og:description" content="Open-source MCP server for self-hosted Exchange 2019 and Active Directory. Book rooms and check free/busy from Claude.">
 <meta property="og:url" content="https://shahmirdelfanazari.github.io/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/">
 <meta name="twitter:card" content="summary">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
-  "name": "Microsoft Exchange 2019 On-Premises Claude MCP",
-  "description": "MCP server that connects Claude to on-premises Microsoft Exchange 2019 (EWS) and Active Directory: meeting-room booking, free/busy, calendar and email.",
+  "name": "Exchange 2019 Claude MCP",
+  "description": "MCP server that connects Claude to self-hosted Exchange 2019 (EWS) and Active Directory: meeting-room booking, free/busy, calendar and email.",
   "codeRepository": "https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP",
   "programmingLanguage": "JavaScript",
   "runtimePlatform": "Node.js 20",
   "license": "https://opensource.org/licenses/MIT",
   "version": "2.0.0",
   "author": { "@type": "Person", "name": "Shahmir Delfan Azari" },
-  "keywords": "MCP, Claude, Microsoft Exchange, EWS, Active Directory, Keycloak"
+  "keywords": "MCP, Claude, Exchange 2019, EWS, Active Directory, Keycloak"
 }
 </script>
 <style>
@@ -77,8 +77,8 @@
 </head>
 <body>
 <main>
-  <h1>Microsoft Exchange 2019 On-Premises Claude MCP</h1>
-  <p class="lead">An open-source <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server that connects Claude to <strong>on-premises Microsoft Exchange</strong> (EWS) and <strong>Active Directory</strong>. Book meeting rooms, check colleagues' free/busy, manage calendar events and handle email in plain language, in English or Persian.</p>
+  <h1>Exchange 2019 Claude MCP</h1>
+  <p class="lead">An open-source <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server, for developers and IT teams, that connects Claude to a <strong>self-hosted Exchange 2019</strong> server (EWS) and <strong>Active Directory</strong>. Book meeting rooms, check colleagues' free/busy, manage calendar events and handle email in plain language, in English or Persian.</p>
   <div class="actions">
     <a class="btn primary" href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP">View on GitHub</a>
     <a class="btn" href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP#setup">Setup guide</a>
@@ -95,7 +95,7 @@
   <div class="grid">
     <div class="card"><h3>Two-step booking</h3><p>Claude shows a preview first. Nothing is booked until the user confirms, and free/busy is checked again on confirm.</p></div>
     <div class="card"><h3>Room verification</h3><p>After booking, the server checks that the room accepted the meeting, and rolls the booking back if it declined.</p></div>
-    <div class="card"><h3>Single sign-on</h3><p>Users sign in with OpenID Connect (tested with Keycloak). User passwords never reach the server.</p></div>
+    <div class="card"><h3>Your own identity provider</h3><p>Authentication is handled by your organization's OpenID Connect provider (tested with Keycloak), never by this server.</p></div>
     <div class="card"><h3>Room access control</h3><p>Restrict rooms to Active Directory groups, including nested groups. The check fails closed.</p></div>
     <div class="card"><h3>Recurring meetings</h3><p>Daily, weekly and monthly series, with availability checked for every occurrence.</p></div>
     <div class="card"><h3>Configurable</h3><p>All organization data lives in <code>.env</code> and <code>rooms.json</code>. English and Persian interface.</p></div>
@@ -120,7 +120,8 @@ npm start</code></pre>
   <p>Requirements: Node.js 20+, Exchange 2016/2019 with EWS, a service account with ApplicationImpersonation, an OIDC provider and a TLS reverse proxy. Then connect Claude Code with <code>claude mcp add exchange --transport http https://your-server/mcp</code>, or add a custom connector in claude.ai / Claude Desktop.</p>
 
   <footer>
-    MIT licensed · by Shahmir Delfan Azari ·
+    Independent open-source project. Not affiliated with, endorsed by or sponsored by Microsoft or Anthropic. Exchange and Active Directory are trademarks of Microsoft Corporation; Claude is a trademark of Anthropic.<br>
+    This page collects no data and has no forms. MIT licensed · by Shahmir Delfan Azari ·
     <a href="https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/blob/main/SECURITY.md">Security policy</a>
   </footer>
 </main>
