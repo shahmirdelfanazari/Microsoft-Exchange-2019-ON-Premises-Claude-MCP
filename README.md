@@ -96,8 +96,67 @@ Use pm2 with `deploy/ecosystem.config.cjs.example`, and run a single process (MC
 
 ## Connecting Claude
 
-- **Claude Code:** `claude mcp add exchange --transport http https://mcp.example.com/mcp`
-- **claude.ai / Claude Desktop:** add a custom connector pointing at `https://mcp.example.com/mcp`.
+Replace `https://mcp.example.com` with your `PUBLIC_URL`. Each user signs in once with your OIDC provider in the browser; nobody types a password into Claude.
+
+> **Internal server or public server?** Claude Code and the Claude Desktop setup below connect **from the user's computer**, so they work with a server on your internal network or VPN. Custom connectors added in claude.ai or in Claude Desktop's *Connectors* settings connect **from Anthropic's cloud**, so they need a server reachable from the internet.
+
+### Claude Code
+
+```bash
+claude mcp add exchange --transport http https://mcp.example.com/mcp
+```
+
+Then run `/mcp` inside Claude Code and choose **Authenticate**.
+
+### Claude Desktop on macOS or Windows: desktop extension (recommended)
+
+The `desktop-extension/` folder is a Claude Desktop extension (`.mcpb`). It runs on the user's computer, so it works with a server on your internal network or VPN, and Claude Desktop runs it with its built-in Node.js, so users install nothing else. It holds **no secrets**: at first use it reads the sign-in settings from your server, so the only setting is the server URL.
+
+**How sign-in works:** on the first tool call the extension opens the browser at your OIDC provider. After sign-in the provider redirects to `<PUBLIC_URL>/auth/oauth-callback`, and the extension collects the tokens from `<PUBLIC_URL>/auth/poll-token` with its PKCE verifier. Tokens are refreshed automatically and stored only on the user's computer (`%APPDATA%.claudeexchange-mcp-token.json` on Windows, `~/.claude/exchange-mcp-token.json` on macOS).
+
+#### Build the `.mcpb` (IT admin, once)
+
+You need Node.js 20+ and the repository.
+
+1. Make sure your OIDC client allows the redirect URI `https://<PUBLIC_URL>/auth/oauth-callback` (see [OIDC client](#oidc-client-keycloak)).
+2. Optional but recommended: pre-fill your server so users only click **Install**. In `desktop-extension/manifest.json` set `user_config.server_url.default` to your `PUBLIC_URL` (e.g. `https://mcp.example.com`) and, for Persian messages, `user_config.language.default` to `fa`. You can also change `display_name`.
+3. Build:
+
+   ```bash
+   cd desktop-extension
+   npm install --omit=dev
+   npx @anthropic-ai/mcpb@2.1.2 pack . exchange-2019.mcpb
+   ```
+
+   This writes `exchange-2019.mcpb` (the manifest, `proxy.js`, `messages.js` and their `node_modules`). When you change anything, raise `version` in `manifest.json` and build again.
+4. Share the file with your users through an internal channel (intranet or file share).
+
+#### Install (each user)
+
+1. Open **Claude Desktop** (macOS or Windows) and sign in.
+2. Double-click `exchange-2019.mcpb`, or drag it into the Claude Desktop window. Or install it from the settings:
+   - newer versions: **Settings → Desktop app → Extensions: Manage → Advanced settings → Install Extension…**
+   - older versions: **Settings → Extensions → Advanced settings → Install Extension…**
+3. Review the details and click **Install**. Claude Desktop may warn that the developer is not verified by Anthropic; that is normal for an extension your IT team built. If the server URL wasn't pre-filled, enter the one your IT team gave you (e.g. `https://mcp.example.com`), then make sure the extension is **enabled**.
+4. Start a new chat and ask, for example, *"What meetings do I have tomorrow?"*. A browser window opens with your organization's sign-in page; sign in, then return to Claude. The first answer may say the browser opened; just ask again.
+
+To sign out or switch users, ask Claude to **log out** (the `logout` tool). To update, install the new `.mcpb` the same way. To remove, uninstall it in the Extensions settings.
+
+### claude.ai or Claude Desktop custom connector (internet-facing server only)
+
+**Settings → Connectors → Add custom connector**, name it `Exchange` and use `https://mcp.example.com/mcp`, then **Connect** and sign in. On Team and Enterprise plans an owner adds the connector under organization settings first. Read [SECURITY.md](SECURITY.md) before exposing the server: the service account can read every mailbox.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Extension installed but no Exchange tools in chat | Check it is enabled under **Settings → Desktop app → Extensions** (older versions: **Settings → Extensions**), then start a new chat. Logs: **Settings → Developer → Open Logs Folder**. |
+| "The extension has no server URL" | open this extension in the Extensions settings → **Configure**, enter your `PUBLIC_URL`. |
+| "Could not reach the server's sign-in settings" | Wrong server URL, or the computer is off the internal network/VPN. Open `<PUBLIC_URL>/health` in the browser to check. |
+| Browser opens but sign-in page says invalid redirect URI | Add `https://<PUBLIC_URL>/auth/oauth-callback` (extension) and `http://localhost*` (Claude Code) to the OIDC client's redirect URIs. |
+| `Issuer mismatch in authorization response` (Claude Code) | Turn on Keycloak's *Exclude Issuer From Authentication Response* (see [OIDC client](#oidc-client-keycloak)). |
+| Signed in as the wrong person, or sign-in loops | Ask Claude to log out, or delete `exchange-mcp-token.json` (path above) and try again. |
+| Custom connector can't connect | The server isn't reachable from the internet. Use the desktop extension instead. |
 
 ## Customizing
 

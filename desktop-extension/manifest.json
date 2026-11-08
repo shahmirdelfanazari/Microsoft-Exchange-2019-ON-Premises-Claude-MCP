@@ -1,0 +1,76 @@
+{
+  "manifest_version": "0.3",
+  "name": "exchange-2019",
+  "display_name": "Exchange 2019 (on-premises)",
+  "version": "2.0.0",
+  "description": "Book meeting rooms, check free/busy, manage calendar events and email on your organization's on-premises Exchange server.",
+  "long_description": "Claude Desktop extension for microsoft-exchange-2019-on-premises-claude-mcp. It runs on your computer and connects to your organization's MCP server, so it works on an internal network or VPN. You sign in once in the browser with your organization's single sign-on; your password never goes through Claude.",
+  "author": {
+    "name": "Shahmir Delfan Azari",
+    "url": "https://github.com/shahmirdelfanazari"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP"
+  },
+  "homepage": "https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP",
+  "support": "https://github.com/shahmirdelfanazari/Microsoft-Exchange-2019-ON-Premises-Claude-MCP/issues",
+  "license": "MIT",
+  "keywords": ["exchange", "calendar", "meeting-rooms", "email", "active-directory"],
+  "server": {
+    "type": "node",
+    "entry_point": "proxy.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/proxy.js"],
+      "env": {
+        "EXCHANGE_MCP_URL": "${user_config.server_url}",
+        "UI_LANGUAGE": "${user_config.language}"
+      }
+    }
+  },
+  "user_config": {
+    "server_url": {
+      "type": "string",
+      "title": "Server URL",
+      "description": "Your organization's Exchange MCP server, e.g. https://mcp.example.com (ask your IT team).",
+      "required": true,
+      "default": "https://mcp.example.com"
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the extension's own messages: en or fa.",
+      "required": false,
+      "default": "en"
+    }
+  },
+  "tools": [
+    { "name": "get_current_time", "description": "Get the current date and time" },
+    { "name": "logout", "description": "Log out and clear saved credentials" },
+    { "name": "list_rooms", "description": "List available meeting rooms" },
+    { "name": "search_user", "description": "Search for a user by name or email" },
+    { "name": "get_manager", "description": "Find the manager of a user" },
+    { "name": "resolve_team", "description": "Find all teammates of a person (same manager)" },
+    { "name": "get_direct_reports", "description": "Find all direct reports of a manager" },
+    { "name": "book_meeting_with_team", "description": "Book a meeting with all teammates of a person" },
+    { "name": "book_meeting_with_direct_reports", "description": "Book a meeting with all direct reports of a manager" },
+    { "name": "send_email_to_team", "description": "Send an email to all direct reports of a manager" },
+    { "name": "resolve_group", "description": "Resolve a distribution group to member emails" },
+    { "name": "check_availability", "description": "Check free/busy for users and rooms" },
+    { "name": "smart_schedule", "description": "Check availability and book a meeting, single or recurring" },
+    { "name": "book_for_group", "description": "Book a meeting for all members of a distribution group" },
+    { "name": "list_events", "description": "List calendar events in a date range" },
+    { "name": "update_event", "description": "Update subject, room, attendees or body of an event" },
+    { "name": "delete_event", "description": "Delete a calendar event" },
+    { "name": "list_emails", "description": "List emails from the inbox" },
+    { "name": "read_email", "description": "Read a specific email" },
+    { "name": "send_email", "description": "Send an email" },
+    { "name": "reply_email", "description": "Reply to an email" },
+    { "name": "get_attachments", "description": "Download email attachments" }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  }
+}
