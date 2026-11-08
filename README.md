@@ -119,7 +119,7 @@ The `desktop-extension/` folder is a Claude Desktop extension (`.mcpb`). It runs
 You need Node.js 20+ and the repository.
 
 1. Make sure your OIDC client allows the redirect URI `https://<PUBLIC_URL>/auth/oauth-callback` (see [OIDC client](#oidc-client-keycloak)).
-2. Optional but recommended: pre-fill your server so users only click **Install**. In `desktop-extension/manifest.json` set `user_config.server_url.default` to your `PUBLIC_URL` (e.g. `https://mcp.example.com`) and, for Persian messages, `user_config.language.default` to `fa`. You can also change `display_name`.
+2. Optional but recommended: pre-configure the extension so users only click **Install**, with no settings to type. In `desktop-extension/manifest.json` replace the two `${user_config...}` values under `server.mcp_config.env` with your values, e.g. `"EXCHANGE_MCP_URL": "https://mcp.example.com"` and `"UI_LANGUAGE": "fa"` (or `en`), and delete the whole `user_config` block. (Pre-filled `default` values in `user_config` are not reliably applied by Claude Desktop, so don't rely on them.) You can also change `display_name`.
 3. Build:
 
    ```bash

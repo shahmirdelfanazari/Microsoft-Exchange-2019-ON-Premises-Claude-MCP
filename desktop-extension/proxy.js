@@ -18,7 +18,10 @@ import { execFile } from "child_process";
 import { M } from "./messages.js";
 
 const VERSION = "2.0.0";
-const SERVER_URL = (process.env.EXCHANGE_MCP_URL || "").trim().replace(/\/+$/, "").replace(/\/mcp$/, "");
+// Settings come from manifest.json (user_config or literal env values). An empty field, or a
+// placeholder Claude Desktop did not fill in, counts as unset.
+const setting = name => { const v = (process.env[name] || "").trim(); return v.includes("${") ? "" : v; };
+const SERVER_URL = setting("EXCHANGE_MCP_URL").replace(/\/+$/, "").replace(/\/mcp$/, "");
 const MCP_URL = `${SERVER_URL}/mcp`;
 // Tokens travel to this server, so plain http is allowed only for a server on this computer.
 const SERVER_OK = (() => {
@@ -66,15 +69,14 @@ function generatePKCE() {
   return { verifier, challenge };
 }
 
-// The sign-in URL comes from the server's metadata, so never hand it to a shell:
-// accept only http(s) URLs and start the browser without a shell.
+// The sign-in URL comes from the server's metadata: accept only http(s) URLs. href is
+// percent-encoded, so it holds no quote; on Windows the quotes keep cmd from reading & in the query.
 function openBrowser(url) {
   const u = new URL(url);
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("refusing to open a non-http(s) URL");
-  const [cmd, args] = process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", u.href]]
-    : process.platform === "darwin" ? ["open", [u.href]]
-    : ["xdg-open", [u.href]];
-  execFile(cmd, args, () => {});
+  if (/["^\r\n]/.test(u.href)) throw new Error("refusing to open an unsafe URL");
+  if (process.platform === "win32") execFile("cmd.exe", ["/c", `start "" "${u.href}"`], { windowsVerbatimArguments: true, windowsHide: true }, () => {});
+  else execFile(process.platform === "darwin" ? "open" : "xdg-open", [u.href], () => {});
 }
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────

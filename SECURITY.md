@@ -10,7 +10,7 @@
 ## Desktop extension
 
 - The `.mcpb` contains no secrets and no organization data. It reads the OIDC endpoints and client id from your server at first use, so anyone who has the file still needs network access to the server and a valid user sign-in.
-- The server URL must use `https://` (plain `http://` is accepted only for `localhost`). The sign-in URL from the server is checked to be http(s) and opened without a shell.
+- The server URL must use `https://` (plain `http://` is accepted only for `localhost`). The sign-in URL from the server must be an http(s) URL without quote characters before it is opened in the browser.
 - Access and refresh tokens are stored in the user's profile (`%APPDATA%\.claude\exchange-mcp-token.json` or `~/.claude/exchange-mcp-token.json`, mode 600 where supported), not in the OS keychain. Anyone with access to that user account can use them until they expire; `logout` deletes the file and ends the provider session.
 - Distribute the file through an internal channel, and raise `version` in `manifest.json` for every rebuild so users can tell builds apart.
 

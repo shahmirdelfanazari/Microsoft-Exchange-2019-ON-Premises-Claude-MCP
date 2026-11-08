@@ -24,4 +24,4 @@ const fa = {
   loggedOut: "✅ خارج شدی.",
 };
 
-export const M = (process.env.UI_LANGUAGE || "en").toLowerCase() === "fa" ? fa : en;
+export const M = (process.env.UI_LANGUAGE || "").trim().toLowerCase() === "fa" ? fa : en;
