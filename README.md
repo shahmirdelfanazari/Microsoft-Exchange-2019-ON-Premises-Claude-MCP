@@ -66,6 +66,17 @@ New-ManagementRoleAssignment -Name "exchange-mcp-impersonation" `
   -Role ApplicationImpersonation -User svc-exchange-mcp
 ```
 
+Recommended: the server only impersonates user mailboxes (the signed-in user) and room mailboxes (to confirm bookings), so limit the assignment to those. Shared, discovery, system and equipment mailboxes then stay out of reach:
+
+```powershell
+New-ManagementScope -Name "exchange-mcp-scope" -RecipientRestrictionFilter `
+  "(RecipientTypeDetails -eq 'UserMailbox') -or (RecipientTypeDetails -eq 'RoomMailbox')"
+# Preview who is in scope before applying:
+Get-Recipient -RecipientPreviewFilter (Get-ManagementScope "exchange-mcp-scope").RecipientFilter -ResultSize Unlimited |
+  Group-Object RecipientTypeDetails
+Set-ManagementRoleAssignment "exchange-mcp-impersonation" -CustomRecipientWriteScope "exchange-mcp-scope"
+```
+
 Room mailboxes should be **auto-accept** resource mailboxes.
 
 ### OIDC client (Keycloak)
