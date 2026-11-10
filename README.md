@@ -61,21 +61,19 @@ npm start
 
 ### Exchange
 
-```powershell
-New-ManagementRoleAssignment -Name "exchange-mcp-impersonation" `
-  -Role ApplicationImpersonation -User svc-exchange-mcp
-```
-
-Recommended: the server only impersonates user mailboxes (the signed-in user) and room mailboxes (to confirm bookings), so limit the assignment to those. Shared, discovery, system and equipment mailboxes then stay out of reach:
+The server only impersonates user mailboxes (the signed-in user) and room mailboxes (to confirm bookings), so give the service account impersonation over those only. Shared, discovery, system and equipment mailboxes stay out of reach:
 
 ```powershell
 New-ManagementScope -Name "exchange-mcp-scope" -RecipientRestrictionFilter `
   "(RecipientTypeDetails -eq 'UserMailbox') -or (RecipientTypeDetails -eq 'RoomMailbox')"
-# Preview who is in scope before applying:
+# Preview who is in scope:
 Get-Recipient -RecipientPreviewFilter (Get-ManagementScope "exchange-mcp-scope").RecipientFilter -ResultSize Unlimited |
   Group-Object RecipientTypeDetails
-Set-ManagementRoleAssignment "exchange-mcp-impersonation" -CustomRecipientWriteScope "exchange-mcp-scope"
+New-ManagementRoleAssignment -Name "exchange-mcp-impersonation" `
+  -Role ApplicationImpersonation -User svc-exchange-mcp -CustomRecipientWriteScope "exchange-mcp-scope"
 ```
+
+The same account is used for the LDAP bind by default. To keep the two apart, create a second account with no Exchange rights (any domain user can read the directory) and set `LDAP_BIND_UPN` and `LDAP_BIND_PASSWORD`.
 
 Room mailboxes should be **auto-accept** resource mailboxes.
 
@@ -83,6 +81,7 @@ Room mailboxes should be **auto-accept** resource mailboxes.
 
 - Client ID `exchange-mcp` (or whatever you set in `OIDC_CLIENT_ID`), standard flow, PKCE S256.
 - Redirect URIs: `http://localhost*` (Claude Code) and `https://<PUBLIC_URL>/auth/oauth-callback`.
+- Optional, stricter: add an **audience mapper** to the client that puts your `PUBLIC_URL` into the access token's `aud`, and set `OIDC_AUDIENCE` to the same value. The server then only accepts tokens issued for it specifically.
 - Turn **Advanced → OpenID Connect Compatibility Modes → "Exclude Issuer From Authentication Response"** ON. MCP clients enforce RFC 9207, and this server advertises itself as the issuer. Without this setting, login fails with `Issuer mismatch in authorization response`.
 
 ### Rooms (`rooms.json`)
@@ -117,7 +116,7 @@ Replace `https://mcp.example.com` with your `PUBLIC_URL`. Each user signs in onc
 claude mcp add exchange --transport http https://mcp.example.com/mcp
 ```
 
-Then run `/mcp` inside Claude Code and choose **Authenticate**.
+Claude Code opens the sign-in page on first use (or run `/mcp` and choose **Authenticate**).
 
 ### Claude Desktop on macOS or Windows: desktop extension (recommended)
 

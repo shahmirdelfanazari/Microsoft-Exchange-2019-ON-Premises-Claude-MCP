@@ -28,6 +28,10 @@ export const EWS_TLS_INSECURE = optional("EWS_TLS_INSECURE", "false").toLowerCas
 export const SVC_USERNAME = required("SVC_USERNAME");
 export const SVC_PASSWORD = required("SVC_PASSWORD");
 export const SVC_UPN = optional("SVC_UPN", `${SVC_USERNAME}@${MAIL_DOMAIN}`);
+// Optional separate, read-only account for the LDAP bind, so a leaked LDAP credential
+// cannot impersonate mailboxes. Defaults to the service account above.
+export const LDAP_BIND_UPN = optional("LDAP_BIND_UPN", SVC_UPN);
+export const LDAP_BIND_PASSWORD = optional("LDAP_BIND_PASSWORD", SVC_PASSWORD);
 
 // OpenID Connect provider (tested with Keycloak), e.g. https://sso.example.com/realms/Main
 export const OIDC_ISSUER = required("OIDC_ISSUER").replace(/\/$/, "");
@@ -42,6 +46,17 @@ export const OIDC_CLIENT_SECRET = optional("OIDC_CLIENT_SECRET", optional("KEYCL
 export const OIDC_ALLOWED_CLIENTS = optional("OIDC_ALLOWED_CLIENTS", OIDC_CLIENT_ID).split(",").map(s => s.trim()).filter(Boolean);
 // Reject tokens whose email claim is not verified (set false only if your provider never sets email_verified).
 export const OIDC_REQUIRE_EMAIL_VERIFIED = optional("OIDC_REQUIRE_EMAIL_VERIFIED", "true").toLowerCase() !== "false";
+// Optional: also require this value in the token's aud claim (e.g. your PUBLIC_URL). Needs an
+// audience mapper on the client at your provider, so tokens are issued for this server specifically.
+export const OIDC_AUDIENCE = optional("OIDC_AUDIENCE", "");
+// Desktop extensions before 2.1 sent the token as a session_token tool argument instead of the
+// Authorization header. Set true only while such extensions are still installed.
+export const LEGACY_TOKEN_ARG = optional("LEGACY_TOKEN_ARG", "false").toLowerCase() === "true";
+
+// Each MCP session holds about 1.5 MB. New sessions are refused above MAX_SESSIONS; a user who
+// opens more than MAX_SESSIONS_PER_USER loses their least recently used one.
+export const MAX_SESSIONS = Number(optional("MAX_SESSIONS", "150"));
+export const MAX_SESSIONS_PER_USER = Number(optional("MAX_SESSIONS_PER_USER", "8"));
 
 // Public HTTPS URL of this server (behind your reverse proxy), e.g. https://mcp.example.com
 export const PUBLIC_URL = required("PUBLIC_URL").replace(/\/$/, "");

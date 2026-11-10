@@ -4,7 +4,8 @@
 //
 // Sign-in: the user's browser goes to your OIDC provider, which redirects to
 // <server>/auth/oauth-callback; this proxy then collects the tokens from <server>/auth/poll-token
-// with its PKCE verifier. The OIDC endpoints and client id are read from the server
+// with its PKCE verifier and sends the access token to the server in the Authorization header
+// of every request. The OIDC endpoints and client id are read from the server
 // (/.well-known/oauth-authorization-server and /oauth/register), so the only setting is the server URL.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -17,7 +18,7 @@ import crypto from "crypto";
 import { execFile } from "child_process";
 import { M } from "./messages.js";
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 // Settings come from manifest.json (user_config or literal env values). An empty field, or a
 // placeholder Claude Desktop did not fill in, counts as unset.
 const setting = name => { const v = (process.env[name] || "").trim(); return v.includes("${") ? "" : v; };
@@ -192,7 +193,7 @@ async function signInAndWait() {
 // ─── MCP Remote Call ──────────────────────────────────────────────────────────
 const REQUEST_TIMEOUT_MS = 90000;
 
-function mcpRequest(body, sid) {
+function mcpRequest(body, sid, token) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
     const u = new URL(MCP_URL);
@@ -203,6 +204,7 @@ function mcpRequest(body, sid) {
       "Content-Length": Buffer.byteLength(data)
     };
     if (sid) headers["mcp-session-id"] = sid;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const req = lib.request({
       hostname: u.hostname, port: u.port || undefined, path: u.pathname,
       method: "POST", headers
@@ -268,7 +270,7 @@ async function callTool(name, args) {
     }
   }
 
-  const token = data.access_token;
+  let token = data.access_token;
   if (!token) return text(M.authFailed);
 
   // Team tools: when the model omits "who", default to the signed-in user (email claim of our own token).
@@ -283,13 +285,13 @@ async function callTool(name, args) {
   const callOnce = async () => {
     if (!sessionId) {
       try {
-        const init = await mcpRequest(INIT_BODY, null);
+        const init = await mcpRequest(INIT_BODY, null, token);
         sessionId = init._sessionId || null;
-        if (sessionId) await mcpRequest({ jsonrpc: "2.0", method: "notifications/initialized" }, sessionId).catch(() => {});
+        if (sessionId) await mcpRequest({ jsonrpc: "2.0", method: "notifications/initialized" }, sessionId, token).catch(() => {});
       } catch (e) { return { _notSent: true, _transportError: e.message }; }
     }
     try {
-      return await mcpRequest({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name, arguments: { ...args, session_token: token } } }, sessionId);
+      return await mcpRequest({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name, arguments: args } }, sessionId, token);
     } catch (e) { return { _transportError: e.message }; }
   };
   // The server refused the request BEFORE running it (session unknown after a restart/eviction, or not
@@ -301,6 +303,22 @@ async function callTool(name, args) {
     sessionId = null;
     result = await callOnce();
   }
+  // The server did not accept our token (session ended at the provider, settings changed):
+  // refresh it once and retry; if that fails too, sign in again.
+  if (result._status === 401) {
+    sessionId = null;
+    try {
+      data = await refreshAccessToken(data.refresh_token); tokenData = data; token = data.access_token;
+      result = await callOnce();
+    } catch { result = { _status: 401 }; }
+    if (result._status === 401) {
+      tokenData = null;
+      try { fs.unlinkSync(TOKEN_FILE); } catch {}
+      startOAuthFlow().catch(() => {});
+      return text(M.loginRequired);
+    }
+  }
+  if (result._status === 429) return text(M.tooManyRequests);
   if (result.result) return result.result;
   if (result.error) return text(`❌ ${result.error.message}`);
 

@@ -8,9 +8,10 @@ import { randomUUID } from "crypto";
 import { rootCertificates } from "tls";
 import httpntlm from "httpntlm";
 import {
-  MAIL_DOMAIN, EWS_URL, EWS_CA, EWS_TLS_INSECURE, SVC_USERNAME, SVC_PASSWORD, SVC_UPN,
+  MAIL_DOMAIN, EWS_URL, EWS_CA, EWS_TLS_INSECURE, SVC_USERNAME, SVC_PASSWORD, LDAP_BIND_UPN, LDAP_BIND_PASSWORD,
   OIDC_ISSUER, OIDC_JWKS_URL, OIDC_AUTH_BASE, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET,
-  OIDC_ALLOWED_CLIENTS, OIDC_REQUIRE_EMAIL_VERIFIED,
+  OIDC_ALLOWED_CLIENTS, OIDC_REQUIRE_EMAIL_VERIFIED, OIDC_AUDIENCE, LEGACY_TOKEN_ARG,
+  MAX_SESSIONS, MAX_SESSIONS_PER_USER,
   PUBLIC_URL, PORT, LDAP_URLS, LDAP_BASE_DN, LDAPS_CA,
   ROOMS, RESTRICTED_ROOMS, EXCLUDED_ROOMS, ROOM_SIZE_GUIDE
 } from "./config.js";
@@ -97,7 +98,7 @@ const _jwks = jose.createRemoteJWKSet(new URL(OIDC_JWKS_URL));
 async function validateJWT(token) {
   if (!token) return null;
   try {
-    const { payload } = await jose.jwtVerify(token, _jwks, { issuer: OIDC_ISSUER });
+    const { payload } = await jose.jwtVerify(token, _jwks, { issuer: OIDC_ISSUER, ...(OIDC_AUDIENCE ? { audience: OIDC_AUDIENCE } : {}) });
     // Only accept access tokens issued to this app: a token another client in the realm
     // obtained (azp/aud) must not open mailboxes here.
     const aud = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
@@ -152,7 +153,7 @@ async function getLdapClient() {
     const client = await new Promise((resolve) => {
       const c = ldapCreateClient({ url, timeout: 5000, connectTimeout: 5000, tlsOptions: { ca: LDAPS_CA, rejectUnauthorized: true } });
       c.on('error', () => resolve(null));
-      c.bind(SVC_UPN, SVC_PASSWORD, (err) => {
+      c.bind(LDAP_BIND_UPN, LDAP_BIND_PASSWORD, (err) => {
         if (err) { c.destroy(); resolve(null); } else resolve(c);
       });
     });
@@ -1375,8 +1376,54 @@ async function buildRoomDeniedMessage(reason, userEmail, date = null, start_time
 
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
-// Global session token map — allows updating autoToken after session creation
+// Per session: the access token of the latest request, and the user (email) who opened it
 const sessionTokenMap = new Map();
+const sessionOwner = new Map();
+
+function forgetSession(id) {
+  sessionLastSeen.delete(id); mcpTransports.delete(id); sessionTokenMap.delete(id); sessionOwner.delete(id);
+}
+function closeSession(id) {
+  const tr = mcpTransports.get(id);
+  forgetSession(id);
+  if (tr) { try { tr.close(); } catch (e) {} }
+}
+// Keep a user below MAX_SESSIONS_PER_USER by closing their least recently used sessions
+function evictOldestSessions(email) {
+  const mine = [...sessionOwner].filter(([, owner]) => owner === email).map(([id]) => id)
+    .sort((a, b) => (sessionLastSeen.get(a) || 0) - (sessionLastSeen.get(b) || 0));
+  while (mine.length >= MAX_SESSIONS_PER_USER) closeSession(mine.shift());
+}
+
+// ── Rate limit: fixed one-minute window, in memory ─────────────────────────────
+const RATE_USER_PER_MIN = 600;   // requests per signed-in user
+const RATE_ANON_PER_MIN = 120;   // requests without a valid token, per client IP
+const rateWindows = new Map();   // key -> { start, count }
+function rateLimited(key, limit) {
+  const now = Date.now();
+  const w = rateWindows.get(key);
+  if (!w || now - w.start >= 60000) { rateWindows.set(key, { start: now, count: 1 }); return false; }
+  return ++w.count > limit;
+}
+// Behind the reverse proxy the peer is loopback; the proxy appends the real client to X-Forwarded-For.
+function clientIp(req) {
+  const peer = req.socket.remoteAddress || "";
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",").pop().trim();
+  return /^(::1|127\.|::ffff:127\.)/.test(peer) && forwarded ? forwarded : peer;
+}
+function tooManyRequests(res) {
+  res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "60" });
+  res.end(JSON.stringify({ error: "too_many_requests" }));
+}
+
+function readJsonBody(req, limit = 10 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on("data", c => { size += c.length; if (size > limit) { reject(new Error("body too large")); req.destroy(); } else chunks.push(c); });
+    req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch (e) { reject(e); } });
+    req.on("error", reject);
+  });
+}
 
 // ── Idle session eviction ──────────────────────────────────────────────────────
 // Each session holds a full McpServer (~1.5 MB measured). Clients (DXT, Claude apps) almost never close
@@ -1388,12 +1435,9 @@ const sessionLastSeen = new Map();
 setInterval(() => {
   const now = Date.now();
   for (const [id, seen] of sessionLastSeen) {
-    if (now - seen < SESSION_IDLE_MS) continue;
-    sessionLastSeen.delete(id);
-    const tr = mcpTransports.get(id);
-    mcpTransports.delete(id); mcpTransports.delete(id + '_token'); sessionTokenMap.delete(id);
-    if (tr) { try { tr.close(); } catch (e) {} }
+    if (now - seen >= SESSION_IDLE_MS) closeSession(id);
   }
+  for (const [key, w] of rateWindows) if (now - w.start >= 60000) rateWindows.delete(key);
 }, SESSION_SWEEP_MS).unref();
 
 function buildMcpServer(bearerToken = null, sessionRef = null) {
@@ -1493,12 +1537,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   // ── search_user ──
   server.tool("search_user",
     "Search for a user by name (Persian or English) to get their email address.",
-    { session_token: z.string().optional().optional(), query: z.string().describe(`Name to search, ${T.searchExample}`) },
-    async ({ session_token, query }) => {
-      // Ignore session_token if it looks like a placeholder (not a real JWT or UUID)
-    const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { query: z.string().describe(`Name to search, ${T.searchExample}`) },
+    async ({ query }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -1534,13 +1575,10 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("get_direct_reports",
     `Find all direct reports (subordinates) of a manager using Exchange directory. ALWAYS call this after search_user finds a manager, when user wants to meet or email their team. Triggers: 'people under X', 'X team', ${T.directReportsTriggers}.`,
     {
-      session_token:  z.string(),
       manager_email:  z.string().describe("Email of the manager")
     },
-    async ({ session_token, manager_email }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ manager_email }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const result = await ldapGetDirectReports(manager_email);
@@ -1559,13 +1597,10 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("get_manager",
     `Find the manager of a user using LDAP directory. Use when user asks 'who is my manager', ${T.managerTriggers}, 'boss of X'.`,
     {
-      session_token: z.string().optional().optional(),
       user_email: z.string().describe("Email of the user to find the manager for")
     },
-    async ({ session_token, user_email }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ user_email }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const client = await getLdapClient();
@@ -1599,11 +1634,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
 
   server.tool("resolve_group",
     "Expand an Exchange distribution group to its member list. Use when user asks about a group like it-team@example.com.",
-    { session_token: z.string().optional().optional(), query: z.string().describe("Group name or email e.g. backend-team@example.com") },
-    async ({ session_token, query }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { query: z.string().describe("Group name or email e.g. backend-team@example.com") },
+    async ({ query }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const members = await expandGroup(query, payload.email);
@@ -1617,11 +1650,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
 
   server.tool("resolve_team",
     "Find all teammates of a person (people who share the same manager) using LDAP.",
-    { session_token: z.string().optional().optional(), user_email: z.string().describe("Email of the person to find teammates for") },
-    async ({ session_token, user_email }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { user_email: z.string().describe("Email of the person to find teammates for") },
+    async ({ user_email }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const client = await getLdapClient();
@@ -1651,14 +1682,12 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("book_meeting_with_team",
     "Book a meeting with all teammates of a person (same manager). confirmed=false for preview, confirmed=true to book.",
     {
-      session_token: z.string().optional().optional(), user_email: z.string(), subject: z.string(),
+      user_email: z.string(), subject: z.string(),
       date: z.string().describe("YYYY-MM-DD"), start_time: z.string().describe("HH:MM Iran time"),
       duration_minutes: z.number(), room_email: z.string().optional(), confirmed: z.boolean()
     },
-    async ({ session_token, user_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ user_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const client = await getLdapClient();
@@ -1717,7 +1746,6 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("book_meeting_with_direct_reports",
     "Book a meeting with all direct reports of a manager. Use when user wants to meet with a manager's team/subordinates. Checks availability first.",
     {
-      session_token:    z.string(),
       manager_email:    z.string().describe("Email of the manager"),
       subject:          z.string(),
       date:             z.string().describe("YYYY-MM-DD"),
@@ -1726,10 +1754,8 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       room_email:       z.string().optional(),
       confirmed:        z.boolean().describe("false=preview only, true=book")
     },
-    async ({ session_token, manager_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ manager_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const result = await ldapGetDirectReports(manager_email);
@@ -1790,16 +1816,13 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("send_email_to_team",
     "Send an email to all direct reports of a manager.",
     {
-      session_token: z.string().optional().optional(),
       manager_email: z.string().describe("Email of the manager"),
       subject:       z.string(),
       body:          z.string(),
       confirmed:     z.boolean().describe("false=preview, true=send")
     },
-    async ({ session_token, manager_email, subject, body, confirmed }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ manager_email, subject, body, confirmed }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       try {
         const result = await ldapGetDirectReports(manager_email);
@@ -1827,11 +1850,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
 
   server.tool("list_rooms",
     "List all meeting rooms WITH this user's real access status, verified live against AD group membership via LDAP. Each room shows: ✅ = this user CAN book it, 🔒 = this user CANNOT book it. This is the ONLY source of truth for room access — when a room shows ✅ the user definitely has access (no need to test-book to confirm), and when it shows 🔒 the user definitely does not. Never treat ✅/🔒 as free/busy — it is access only.",
-    { session_token: z.string().optional().optional(), filter: z.string().optional().describe("Optional filter: part of a room name or email, e.g. 'A1'") },
-    async ({ session_token, filter }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { filter: z.string().optional().describe("Optional filter: part of a room name or email, e.g. 'A1'") },
+    async ({ filter }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -1854,14 +1875,11 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("check_availability",
     "Check free/busy status for users AND rooms on a specific date. Returns every room with its per-user access status from LDAP: ✅ (free + user can book), 🔒 (user has NO access — never suggest), 🔴 (busy). USE THIS when the user asks to find an available room — it is the ONLY source of truth for which rooms this user may book. Never decide room access by name or type; only ✅ rooms are bookable by this user. Do NOT call this before smart_schedule for an already-chosen room (smart_schedule does its own fresh check).",
     {
-      session_token: z.string().optional().optional(),
       emails: z.array(z.string()).describe("List of email addresses to check"),
       date: z.string().describe("Date to check e.g. 2026-04-20")
     },
-    async ({ session_token, emails, date, start_time, end_time }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ emails, date, start_time, end_time }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -1916,7 +1934,6 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("smart_schedule",
     "Check availability and book a meeting — single OR recurring. Returns a PREVIEW first (nothing is booked); after the user approves, call again with confirmed=true to actually book. Use the recurrence param for weekly/daily/monthly series — it handles the whole series in one call, NEVER create separate meetings. ALWAYS call list_rooms first to get the correct room_email. Suggests alternative slots if the requested time is busy.",
     {
-      session_token: z.string().optional(),
       subject: z.string().describe("Meeting title"),
       date: z.string().describe("Preferred date e.g. 2026-04-20 (start date of the series if recurring)"),
       start_time: z.string().describe("Start time in HH:MM format. IMPORTANT: Send Iran local time directly (Asia/Tehran). Do NOT convert to UTC. Do NOT subtract or add any offset."),
@@ -1932,11 +1949,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       }).optional().describe("For recurring/repeating meetings — handles the WHOLE series. Weekly 4 weeks: {type:'weekly',interval:1,occurrences:4}"),
       confirmed: z.boolean().default(false).describe("MUST be false on the first call. The server checks availability and replies with a preview containing the resolved date, weekday, room and attendees. Show that preview to the user verbatim and wait for explicit approval. Only then call again with confirmed=true. Never set true on the first call.")
     },
-    async ({ session_token, subject, date, start_time, duration_minutes, attendee_emails: _ae, emails, room_email, body, recurrence, confirmed }) => {
+    async ({ subject, date, start_time, duration_minutes, attendee_emails: _ae, emails, room_email, body, recurrence, confirmed }) => {
       const attendee_emails = _ae || emails || [];
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-      const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-      const payload = await validateJWT(_resolvedToken);
+      const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "\u274c Session expired. Please try again \u2014 a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const pad = n => String(n).padStart(2, "0");
@@ -2130,11 +2145,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   // ── list_events ──
   server.tool("list_events",
     "List your calendar events.",
-    { session_token: z.string().optional(), start: z.string().describe("ALWAYS use full datetime: 2026-06-20T00:00:00"), end: z.string().describe("ALWAYS use full datetime: 2026-06-20T23:59:59") },
-    async ({ session_token, start, end }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { start: z.string().describe("ALWAYS use full datetime: 2026-06-20T00:00:00"), end: z.string().describe("ALWAYS use full datetime: 2026-06-20T23:59:59") },
+    async ({ start, end }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2169,15 +2182,12 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("delete_event",
     `Delete a calendar event. CRITICAL: If event is part of a recurring series, ALWAYS ask user first: ${T.deleteScopeQuestion} — NEVER auto-delete series without asking. For single non-recurring events: delete immediately after user confirmation.`,
     {
-      session_token: z.string().optional().optional(),
       item_id: z.string(),
       change_key: z.string(),
       recurrence_action: z.enum(["AllOccurrences","SpecifiedOccurrenceOnly","AllFollowingOccurrences"]).default("AllOccurrences").describe("AllOccurrences=entire series (default), SpecifiedOccurrenceOnly=just this one, AllFollowingOccurrences=this and future")
     },
-    async ({ session_token, item_id, change_key, recurrence_action }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ item_id, change_key, recurrence_action }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again." }] };
       const userEmail = payload.email;
       try {
@@ -2194,7 +2204,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("update_event",
     "Update an event. IMPORTANT: Always call list_events first to get a fresh change_key before updating — stale change_keys will silently fail. For time changes: check_availability first for all attendees+room. attendee_emails replaces ALL attendees (include room email separately via room_email).",
     {
-      session_token: z.string().optional().optional(), item_id: z.string(), change_key: z.string(),
+      item_id: z.string(), change_key: z.string(),
       attendee_emails: z.array(z.string()).optional().describe("Full replacement list — replaces ALL existing attendees"),
       room_email: z.string().optional().describe("New room email e.g. room-a1@example.com — sets location and room attendee"),
       subject: z.string().optional(),
@@ -2203,10 +2213,8 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       body: z.string().optional(),
       recurrence_action: z.enum(['AllOccurrences','SpecifiedOccurrenceOnly']).default('AllOccurrences').describe("AllOccurrences=update entire series, SpecifiedOccurrenceOnly=only this occurrence")
     },
-    async ({ session_token, item_id, change_key, subject, start, end, body, attendee_emails, room_email, recurrence_action }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ item_id, change_key, subject, start, end, body, attendee_emails, room_email, recurrence_action }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2314,7 +2322,6 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("book_for_group",
     "Book a meeting for an entire AD group. Expands the group, checks availability for all members + room, shows who's busy, and books only when confirmed=true is passed. Flow: first call with confirmed=false to show availability report, then call again with confirmed=true after user agrees.",
     {
-      session_token: z.string().optional().optional(),
       group_email: z.string().optional().describe("Group email e.g. backend-team@example.com"),
       group_name: z.string().optional().describe("Group name alias for group_email"),
       subject: z.string().describe("Meeting title"),
@@ -2325,11 +2332,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       body: z.string().optional().describe("Meeting description"),
       confirmed: z.boolean().default(false).describe("Pass true only after user has explicitly confirmed they want to proceed despite any conflicts, or after reviewing the availability report")
     },
-    async ({ session_token, group_email: _gep, group_name, subject, date, start_time, duration_minutes, room_email, body, confirmed }) => {
+    async ({ group_email: _gep, group_name, subject, date, start_time, duration_minutes, room_email, body, confirmed }) => {
       const group_email = _gep || group_name;
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2440,16 +2445,13 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("list_emails",
     "List emails from inbox. Filter by unread, sender name/email, or date.",
     {
-      session_token: z.string().optional().optional(),
       unread_only: z.boolean().optional(),
       from: z.string().optional().describe("Sender name or email to filter by"),
       date: z.string().optional().describe("Date filter e.g. 2026-04-25"),
       max_count: z.number().optional()
     },
-    async ({ session_token, unread_only, from: fromFilter, date, max_count }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ unread_only, from: fromFilter, date, max_count }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2474,11 +2476,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   // ── read_email ──
   server.tool("read_email",
     "Read the full content of an email by ID. Marks it as read.",
-    { session_token: z.string().optional().optional(), item_id: z.string() },
-    async ({ session_token, item_id }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { item_id: z.string() },
+    async ({ item_id }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2497,7 +2497,6 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("send_email",
     "Send an email. Supports To, CC, BCC, subject and body.",
     {
-      session_token: z.string().optional().optional(),
       to: z.array(z.string()),
       cc: z.array(z.string()).optional(),
       bcc: z.array(z.string()).optional(),
@@ -2505,10 +2504,8 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       body: z.string(),
       direction: z.enum(['auto','rtl','ltr']).optional().describe("Text direction: auto=detect, rtl=Persian/Arabic, ltr=English")
     },
-    async ({ session_token, to, cc, bcc, subject, body, direction }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ to, cc, bcc, subject, body, direction }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2526,16 +2523,13 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   server.tool("reply_email",
     "Reply to an existing email by ID.",
     {
-      session_token: z.string().optional().optional(),
       item_id: z.string(),
       body: z.string(),
       reply_all: z.boolean().optional(),
       direction: z.enum(['auto','rtl','ltr']).optional().describe("Text direction: auto=detect, rtl=Persian/Arabic, ltr=English")
     },
-    async ({ session_token, item_id, body, reply_all, direction }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    async ({ item_id, body, reply_all, direction }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2550,11 +2544,9 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   // ── get_attachments ──
       server.tool("get_attachments",
     "Download email attachments and return browser-ready download links (valid 10 min).",
-    { session_token: z.string().optional().optional(), item_id: z.string() },
-    async ({ session_token, item_id }) => {
-      const isRealToken = (t) => t && (t.startsWith("eyJ") || /^[0-9a-f-]{36}$/.test(t));
-    const _resolvedToken = (isRealToken(session_token) ? session_token : null) || getAutoToken();
-    const payload = await validateJWT(_resolvedToken);
+    { item_id: z.string() },
+    async ({ item_id }) => {
+    const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
       const userEmail = payload.email;
       const userName = payload.preferred_username;
@@ -2610,8 +2602,8 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
   // ── logout ──
   server.tool("logout",
     "Logout and invalidate session.",
-    { session_token: z.string().optional() },
-    async ({ session_token }) => {
+    {},
+    async () => {
       return { content: [{ type: "text", text: T.loggedOut }] };
     }
   );
@@ -2660,6 +2652,7 @@ const httpServer = createServer(async (req, res) => {
 
   // Dynamic client registration
   if (req.method === "POST" && req.url === "/oauth/register") {
+    if (rateLimited(`ip:${clientIp(req)}`, RATE_ANON_PER_MIN)) return tooManyRequests(res);
     res.writeHead(200, { "Content-Type": "application/json" });
     // Static registration: every client gets the one pre-configured OIDC client.
     // With a confidential client the secret is handed out here, so it only protects
@@ -2676,49 +2669,60 @@ const httpServer = createServer(async (req, res) => {
   }
 
   if (req.url?.startsWith("/mcp")) {
-    // Extract Bearer token from Authorization header (Claude Code OAuth flow)
+    // Every request must carry the user's access token: Authorization: Bearer <token>
     const authHeader = req.headers["authorization"];
-    let bearerToken = null;
+    const hasBearer = !!authHeader && authHeader.startsWith("Bearer ");
+    let token = hasBearer ? authHeader.substring(7) : null;
+    const sessionId = req.headers["mcp-session-id"];
+    let parsedBody;
+    if (!token && LEGACY_TOKEN_ARG) {
+      // Desktop extensions before 2.1 open their session without a token and send it as a
+      // session_token tool argument. Turn LEGACY_TOKEN_ARG off once every user has updated.
+      if (req.method === "POST") {
+        try { parsedBody = await readJsonBody(req); }
+        catch (e) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null })); return; }
+        const args = parsedBody && !Array.isArray(parsedBody) ? parsedBody.params?.arguments : null;
+        if (args && typeof args === "object") {
+          if (typeof args.session_token === "string") token = args.session_token;
+          delete args.session_token;
+        }
+      }
+      if (!token && sessionId) token = sessionTokenMap.get(sessionId) || null;
+    }
+    const user = token ? await validateJWT(token) : null;
 
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      bearerToken = authHeader.substring(7);
-      const payload = await validateJWT(bearerToken).catch(() => null);
-      if (!payload) {
-        res.writeHead(401, {
-          "WWW-Authenticate": `Bearer realm="${MCP_SERVER_URL}", resource_metadata="${MCP_SERVER_URL}/.well-known/oauth-protected-resource"`,
-          "Content-Type": "application/json"
-        });
-        res.end(JSON.stringify({ error: "invalid_token", error_description: "Token is invalid or expired" }));
-        return;
-      }
-      req._bearerToken = bearerToken;
-    } else {
-      // No Bearer token — check if this session already has a token stored
-      const existingSessionId = req.headers["mcp-session-id"];
-      const storedToken = existingSessionId ? mcpTransports.get(existingSessionId + '_token') : null;
-      if (storedToken) {
-        bearerToken = storedToken;
-      }
-      // Only block completely new sessions with no token at all
-      // DXT sends session_token in tool args — always let through
-      // Claude Code OAuth sends Bearer header — handled above
+    if (rateLimited(user ? `user:${user.email}` : `ip:${clientIp(req)}`, user ? RATE_USER_PER_MIN : RATE_ANON_PER_MIN)) return tooManyRequests(res);
+    if (!user && (hasBearer || !LEGACY_TOKEN_ARG)) {
+      res.writeHead(401, {
+        "WWW-Authenticate": `Bearer realm="${MCP_SERVER_URL}", resource_metadata="${MCP_SERVER_URL}/.well-known/oauth-protected-resource"`,
+        "Content-Type": "application/json"
+      });
+      res.end(JSON.stringify({ error: "invalid_token", error_description: "A valid access token is required" }));
+      return;
     }
 
-    const sessionId = req.headers["mcp-session-id"];
     // Unknown or expired session id (after a restart or idle eviction): answer 404 as the MCP spec
     // requires, so clients start a new session instead of failing with 400 "Server not initialized".
-    if (sessionId && !mcpTransports.has(sessionId)) {
+    // A session also belongs to the user who opened it.
+    const owner = sessionId ? sessionOwner.get(sessionId) : undefined;
+    if (sessionId && (!mcpTransports.has(sessionId) || (user && owner && owner !== user.email))) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null }));
       return;
     }
-    if (sessionId) sessionLastSeen.set(sessionId, Date.now());
-    // Store bearer tokens per session
-    if (bearerToken && sessionId) mcpTransports.set(sessionId + '_token', bearerToken);
-    const effectiveToken = bearerToken || (sessionId ? mcpTransports.get(sessionId + '_token') : null);
+    if (sessionId) {
+      sessionLastSeen.set(sessionId, Date.now());
+      if (user) { sessionTokenMap.set(sessionId, token); sessionOwner.set(sessionId, user.email); }
+    }
 
     let transport = sessionId ? mcpTransports.get(sessionId) : null;
     if (!transport) {
+      if (mcpTransports.size >= MAX_SESSIONS) {
+        res.writeHead(503, { "Content-Type": "application/json", "Retry-After": "60" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "Server is busy: too many open sessions" }, id: null }));
+        return;
+      }
+      if (user) evictOldestSessions(user.email);
       const sessionRef = { id: null };
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
@@ -2727,27 +2731,13 @@ const httpServer = createServer(async (req, res) => {
           sessionRef.id = id;
           sessionLastSeen.set(id, Date.now());
           mcpTransports.set(id, transport);
-          if (effectiveToken) {
-            mcpTransports.set(id + '_token', effectiveToken);
-            sessionTokenMap.set(id, effectiveToken);
-          }
+          if (user) { sessionTokenMap.set(id, token); sessionOwner.set(id, user.email); }
         }
       });
-      transport.onclose = () => {
-        if (transport.sessionId) {
-          sessionLastSeen.delete(transport.sessionId);
-          mcpTransports.delete(transport.sessionId);
-          mcpTransports.delete(transport.sessionId + '_token');
-          sessionTokenMap.delete(transport.sessionId);
-        }
-      };
-      await buildMcpServer(effectiveToken, sessionRef).connect(transport);
-    } else if (bearerToken && sessionId) {
-      // Token arrived on existing session — update sessionTokenMap
-      mcpTransports.set(sessionId + '_token', bearerToken);
-      sessionTokenMap.set(sessionId, bearerToken);
+      transport.onclose = () => { if (transport.sessionId) forgetSession(transport.sessionId); };
+      await buildMcpServer(user ? token : null, sessionRef).connect(transport);
     }
-    await transport.handleRequest(req, res);
+    await transport.handleRequest(req, res, parsedBody);
     return;
   }
   res.writeHead(404); res.end("Not found");

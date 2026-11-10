@@ -9,6 +9,7 @@ const en = {
   notSent: why => `❌ Could not connect to the server (${why}). Nothing was done; try again in a moment.`,
   noAnswerSafe: why => `❌ The server did not answer (${why}). Please try again.`,
   noAnswerUnsafe: why => `⚠️ The server's answer did not arrive (${why}) — the action may have been done. Check with list_events (or your mailbox) before repeating it, so nothing is created twice.`,
+  tooManyRequests: "⏳ Too many requests. Wait a minute, then try again.",
   loggedOut: "✅ Logged out.",
 };
 
@@ -21,6 +22,7 @@ const fa = {
   notSent: why => `❌ اتصال به سرور برقرار نشد (${why}). هیچ عملیاتی انجام نشد؛ کمی بعد دوباره تلاش کن.`,
   noAnswerSafe: why => `❌ سرور پاسخ نداد (${why}). لطفاً دوباره تلاش کن.`,
   noAnswerUnsafe: why => `⚠️ پاسخ سرور نرسید (${why}) — ممکن است این عملیات انجام شده باشد. قبل از تکرار، با list_events (یا صندوق ایمیل) بررسی کن؛ کورکورانه تکرار نکن تا تکراری ثبت نشود.`,
+  tooManyRequests: "⏳ تعداد درخواست‌ها زیاد است. یک دقیقه صبر کن و دوباره امتحان کن.",
   loggedOut: "✅ خارج شدی.",
 };
 

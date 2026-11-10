@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "exchange-2019",
   "display_name": "Exchange 2019 (on-premises)",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Book meeting rooms, check free/busy, manage calendar events and email on your organization's on-premises Exchange server.",
   "long_description": "Claude Desktop extension for microsoft-exchange-2019-on-premises-claude-mcp. It runs on your computer and connects to your organization's MCP server, so it works on an internal network or VPN. You sign in once in the browser with your organization's single sign-on; your password never goes through Claude.",
   "author": {
