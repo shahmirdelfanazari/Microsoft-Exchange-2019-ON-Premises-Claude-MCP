@@ -18,6 +18,11 @@ export const MAIL_DOMAIN = required("MAIL_DOMAIN").toLowerCase();
 
 // Exchange Web Services endpoint, e.g. https://mail.example.com/EWS/Exchange.asmx
 export const EWS_URL = required("EWS_URL");
+// The EWS certificate is verified against Node's CA store, plus this CA (PEM) if the file exists.
+// EWS_TLS_INSECURE=true turns verification off (not recommended: exposes the service account).
+const ewsCaPath = optional("EWS_CA_PATH", "");
+export const EWS_CA = ewsCaPath && existsSync(ewsCaPath) ? readFileSync(ewsCaPath, "utf8") : undefined;
+export const EWS_TLS_INSECURE = optional("EWS_TLS_INSECURE", "false").toLowerCase() === "true";
 
 // Service account with the ApplicationImpersonation role (also used for the LDAP bind)
 export const SVC_USERNAME = required("SVC_USERNAME");
@@ -32,6 +37,11 @@ export const OIDC_CLIENT_ID = optional("OIDC_CLIENT_ID", "exchange-mcp");
 // Optional: only for confidential clients. Leave empty for a public PKCE client.
 // (KEYCLOAK_CLIENT_SECRET is accepted as a legacy name.)
 export const OIDC_CLIENT_SECRET = optional("OIDC_CLIENT_SECRET", optional("KEYCLOAK_CLIENT_SECRET", ""));
+// Access tokens are accepted only when issued to one of these clients (azp or aud).
+// Comma-separated; defaults to OIDC_CLIENT_ID. Tokens other apps in the realm obtained are rejected.
+export const OIDC_ALLOWED_CLIENTS = optional("OIDC_ALLOWED_CLIENTS", OIDC_CLIENT_ID).split(",").map(s => s.trim()).filter(Boolean);
+// Reject tokens whose email claim is not verified (set false only if your provider never sets email_verified).
+export const OIDC_REQUIRE_EMAIL_VERIFIED = optional("OIDC_REQUIRE_EMAIL_VERIFIED", "true").toLowerCase() !== "false";
 
 // Public HTTPS URL of this server (behind your reverse proxy), e.g. https://mcp.example.com
 export const PUBLIC_URL = required("PUBLIC_URL").replace(/\/$/, "");

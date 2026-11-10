@@ -5,7 +5,10 @@
 - The service account has **ApplicationImpersonation**: whoever holds its password can read and send mail as anyone. Use a strong password, monitor lockouts, and store it only in `.env` (mode 600).
 - Run the server on an **internal network**. Both Node processes bind to `127.0.0.1`; expose them only through a TLS reverse proxy.
 - With a confidential OIDC client, `POST /oauth/register` hands the client secret to any caller, which is how MCP clients obtain it. The secret therefore only protects against callers who cannot reach the server. Prefer a public PKCE client if your provider allows it.
-- Every request is authorized by a JWT verified against the provider's JWKS (`issuer` checked). The user's identity is the `email` claim.
+- Every request is authorized by a JWT verified against the provider's JWKS. The token must come from `OIDC_ISSUER`, be an access token issued to this app (`azp` or `aud` in `OIDC_ALLOWED_CLIENTS`, default `OIDC_CLIENT_ID`), and carry a verified `email` (`email_verified=true`, see `OIDC_REQUIRE_EMAIL_VERIFIED`). Tokens other apps in the same realm obtained, ID tokens and unverified emails are rejected. The user's identity is the `email` claim, so users must not be able to change their own email at the provider (e.g. LDAP/AD federation in read-only mode).
+- Limit what impersonation can reach with an Exchange management scope (e.g. user and room mailboxes only, not executives or service mailboxes): `New-ManagementScope` plus `-CustomResourceScope` on the role assignment.
+- The EWS certificate is verified (Node's CA store, plus `EWS_CA_PATH` for an internal CA). `EWS_TLS_INSECURE=true` disables this; avoid it, since the service account's NTLM login could then be intercepted.
+- Values from users and the model are XML-escaped in every SOAP request and RFC 4515-escaped in every LDAP filter.
 
 ## Desktop extension
 
@@ -16,8 +19,6 @@
 
 ## Known limitations
 
-- TLS to Exchange is not verified (`rejectUnauthorized: false` in `ewsRequest`). Pin your internal CA if you can.
-- Some user values are interpolated into SOAP bodies and LDAP filters without escaping (e.g. `update_event` subject, `send_email` subject, LDAP `mail=` filters).
 - `send_email` sends immediately; it has no server-side confirmation gate.
 - Attachments are written to `/tmp` and deleted after 10 minutes. Files left behind by a restart are not cleaned up.
 

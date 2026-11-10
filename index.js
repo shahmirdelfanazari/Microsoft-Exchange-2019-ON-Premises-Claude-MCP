@@ -5,10 +5,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { createServer } from "http";
 import { randomUUID } from "crypto";
+import { rootCertificates } from "tls";
 import httpntlm from "httpntlm";
 import {
-  MAIL_DOMAIN, EWS_URL, SVC_USERNAME, SVC_PASSWORD, SVC_UPN,
+  MAIL_DOMAIN, EWS_URL, EWS_CA, EWS_TLS_INSECURE, SVC_USERNAME, SVC_PASSWORD, SVC_UPN,
   OIDC_ISSUER, OIDC_JWKS_URL, OIDC_AUTH_BASE, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET,
+  OIDC_ALLOWED_CLIENTS, OIDC_REQUIRE_EMAIL_VERIFIED,
   PUBLIC_URL, PORT, LDAP_URLS, LDAP_BASE_DN, LDAPS_CA,
   ROOMS, RESTRICTED_ROOMS, EXCLUDED_ROOMS, ROOM_SIZE_GUIDE
 } from "./config.js";
@@ -96,6 +98,12 @@ async function validateJWT(token) {
   if (!token) return null;
   try {
     const { payload } = await jose.jwtVerify(token, _jwks, { issuer: OIDC_ISSUER });
+    // Only accept access tokens issued to this app: a token another client in the realm
+    // obtained (azp/aud) must not open mailboxes here.
+    const aud = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
+    if (!OIDC_ALLOWED_CLIENTS.includes(payload.azp) && !aud.some(a => OIDC_ALLOWED_CLIENTS.includes(a))) return null;
+    if (payload.typ && payload.typ !== "Bearer") return null;
+    if (!payload.email || (OIDC_REQUIRE_EMAIL_VERIFIED && payload.email_verified !== true)) return null;
     return payload;
   } catch {
     return null;
@@ -114,6 +122,11 @@ import ldapjsPkg from "ldapjs";
 // ── LDAP helpers for org chart ──
 
 const LDAP_SERVERS = LDAP_URLS;
+
+// Escape a value for use inside an LDAP filter (RFC 4515)
+function ldapEscape(s) {
+  return String(s).replace(/[\\*()\0]/g, c => "\\" + c.charCodeAt(0).toString(16).padStart(2, "0"));
+}
 
 function ldapAttr(entry, name) {
   const a = entry.attributes.find(a => a.type.toLowerCase() === name.toLowerCase());
@@ -152,12 +165,12 @@ async function ldapGetDirectReports(managerEmail) {
   const client = await getLdapClient();
   if (!client) throw new Error('All LDAP servers unreachable');
   try {
-    const mgr = await ldapSearch(client, LDAP_BASE_DN, `(mail=${managerEmail})`, ['distinguishedName','displayName']);
+    const mgr = await ldapSearch(client, LDAP_BASE_DN, `(mail=${ldapEscape(managerEmail)})`, ['distinguishedName','displayName']);
     if (!mgr.length) return null;
     const managerDN = ldapAttr(mgr[0], 'distinguishedName');
     const managerName = ldapAttr(mgr[0], 'displayName');
     const reports = await ldapSearch(client, LDAP_BASE_DN,
-      `(&(objectClass=user)(manager=${managerDN})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`,
+      `(&(objectClass=user)(manager=${ldapEscape(managerDN)})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`,
       ['displayName','mail']
     );
     return {
@@ -178,14 +191,15 @@ function ewsRequest(username, password, body, impersonateEmail = null) {
   const actualUser = impersonateEmail ? SVC_USERNAME : username;
   const actualPass = impersonateEmail ? SVC_PASSWORD : password;
   const finalBody = impersonateEmail
-    ? body.replace(/<soap:Body>/, `<soap:Header><t:ExchangeImpersonation><t:ConnectingSID><t:PrimarySmtpAddress>${impersonateEmail}</t:PrimarySmtpAddress></t:ConnectingSID></t:ExchangeImpersonation></soap:Header><soap:Body>`)
+    ? body.replace(/<soap:Body>/, `<soap:Header><t:ExchangeImpersonation><t:ConnectingSID><t:PrimarySmtpAddress>${xmlEscape(impersonateEmail)}</t:PrimarySmtpAddress></t:ConnectingSID></t:ExchangeImpersonation></soap:Header><soap:Body>`)
     : body;
   return new Promise((resolve, reject) => {
     httpntlm.post({
       url: EWS_URL, username: actualUser, password: actualPass, workstation: "", domain: "",
       body: finalBody,
       headers: { "Content-Type": "text/xml; charset=utf-8", "Accept": "text/xml" },
-      rejectUnauthorized: false
+      rejectUnauthorized: !EWS_TLS_INSECURE,
+      ...(EWS_CA ? { ca: [...rootCertificates, EWS_CA] } : {})
     }, (err, res) => {
       if (err) return reject(err);
       if (res.statusCode === 401) return reject(new Error("AUTH_FAILED"));
@@ -219,7 +233,7 @@ async function resolveNames(query) {
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:ResolveNames ReturnFullContactData="true" SearchScope="ActiveDirectory">
-      <m:UnresolvedEntry>${q}</m:UnresolvedEntry>
+      <m:UnresolvedEntry>${xmlEscape(q)}</m:UnresolvedEntry>
     </m:ResolveNames>
   </soap:Body>
 </soap:Envelope>`;
@@ -277,7 +291,7 @@ async function getRoomsInList(listEmail) {
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:GetRooms>
-      <m:RoomList><t:EmailAddress>${listEmail}</t:EmailAddress></m:RoomList>
+      <m:RoomList><t:EmailAddress>${xmlEscape(listEmail)}</t:EmailAddress></m:RoomList>
     </m:GetRooms>
   </soap:Body>
 </soap:Envelope>`;
@@ -344,7 +358,7 @@ function validateRoomEmail(roomEmail) {
 // ─── EWS: Get Availability ────────────────────────────────────────────────────
 async function getAvailability(emails, startDate, endDate) {
   const attendees = emails.map(e =>
-    `<t:MailboxData><t:Email><t:Address>${e}</t:Address></t:Email><t:AttendeeType>Required</t:AttendeeType></t:MailboxData>`
+    `<t:MailboxData><t:Email><t:Address>${xmlEscape(e)}</t:Address></t:Email><t:AttendeeType>Required</t:AttendeeType></t:MailboxData>`
   ).join("");
 
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -361,8 +375,8 @@ async function getAvailability(emails, startDate, endDate) {
       <m:MailboxDataArray>${attendees}</m:MailboxDataArray>
       <t:FreeBusyViewOptions>
         <t:TimeWindow>
-          <t:StartTime>${startDate}</t:StartTime>
-          <t:EndTime>${endDate}</t:EndTime>
+          <t:StartTime>${xmlEscape(startDate)}</t:StartTime>
+          <t:EndTime>${xmlEscape(endDate)}</t:EndTime>
         </t:TimeWindow>
         <t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>
         <t:RequestedView>DetailedMerged</t:RequestedView>
@@ -575,7 +589,7 @@ async function getRoomCalendar(roomEmail, startDate, endDate) {
           <t:FieldURI FieldURI="calendar:UID"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:CalendarView MaxEntriesReturned="1000" StartDate="${startDate}T00:00:00" EndDate="${endDate}T23:59:59"/>
+      <m:CalendarView MaxEntriesReturned="1000" StartDate="${xmlEscape(startDate)}T00:00:00" EndDate="${xmlEscape(endDate)}T23:59:59"/>
       <m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>
     </m:FindItem>
   </soap:Body>
@@ -675,7 +689,7 @@ async function rollbackMeeting(userEmail, { subject, start }) {
 
 async function createMeeting(userEmail, { subject, start, end, roomEmail, attendeeEmails, body, recurrence }) {
   const required = [...(attendeeEmails || []), ...(roomEmail ? [roomEmail] : [])].map(e =>
-    `<t:Attendee><t:Mailbox><t:EmailAddress>${e}</t:EmailAddress></t:Mailbox></t:Attendee>`
+    `<t:Attendee><t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox></t:Attendee>`
   ).join("");
 
   let recurrenceXml = '';
@@ -683,21 +697,21 @@ async function createMeeting(userEmail, { subject, start, end, roomEmail, attend
     const { type, interval = 1, endDate, occurrences } = recurrence;
     let patternXml = '';
     if (type === 'daily') {
-      patternXml = `<t:DailyRecurrence><t:Interval>${interval}</t:Interval></t:DailyRecurrence>`;
+      patternXml = `<t:DailyRecurrence><t:Interval>${xmlEscape(interval)}</t:Interval></t:DailyRecurrence>`;
     } else if (type === 'weekly') {
       const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
       const [dp] = start.split('T');
       const [y,mo,dd] = dp.split('-').map(Number);
       const dow = days[new Date(Date.UTC(y, mo-1, dd)).getUTCDay()];
-      patternXml = `<t:WeeklyRecurrence><t:Interval>${interval}</t:Interval><t:DaysOfWeek>${dow}</t:DaysOfWeek></t:WeeklyRecurrence>`;
+      patternXml = `<t:WeeklyRecurrence><t:Interval>${xmlEscape(interval)}</t:Interval><t:DaysOfWeek>${xmlEscape(dow)}</t:DaysOfWeek></t:WeeklyRecurrence>`;
     } else if (type === 'monthly') {
       const dayOfMonth = parseInt(start.split('T')[0].split('-')[2]);
-      patternXml = `<t:AbsoluteMonthlyRecurrence><t:Interval>${interval}</t:Interval><t:DayOfMonth>${dayOfMonth}</t:DayOfMonth></t:AbsoluteMonthlyRecurrence>`;
+      patternXml = `<t:AbsoluteMonthlyRecurrence><t:Interval>${xmlEscape(interval)}</t:Interval><t:DayOfMonth>${xmlEscape(dayOfMonth)}</t:DayOfMonth></t:AbsoluteMonthlyRecurrence>`;
     }
     const startDate = start.split('T')[0];
     let rangeXml = endDate
-      ? `<t:EndDateRecurrence><t:StartDate>${startDate}</t:StartDate><t:EndDate>${endDate}</t:EndDate></t:EndDateRecurrence>`
-      : `<t:NumberedRecurrence><t:StartDate>${startDate}</t:StartDate><t:NumberOfOccurrences>${occurrences || 10}</t:NumberOfOccurrences></t:NumberedRecurrence>`;
+      ? `<t:EndDateRecurrence><t:StartDate>${xmlEscape(startDate)}</t:StartDate><t:EndDate>${xmlEscape(endDate)}</t:EndDate></t:EndDateRecurrence>`
+      : `<t:NumberedRecurrence><t:StartDate>${xmlEscape(startDate)}</t:StartDate><t:NumberOfOccurrences>${xmlEscape(occurrences || 10)}</t:NumberOfOccurrences></t:NumberedRecurrence>`;
     recurrenceXml = `<t:Recurrence>${patternXml}${rangeXml}</t:Recurrence>`;
   }
 
@@ -712,8 +726,8 @@ async function createMeeting(userEmail, { subject, start, end, roomEmail, attend
         <t:CalendarItem>
           <t:Subject>${xmlEscape(subject)}</t:Subject>
           ${body ? `<t:Body BodyType="Text">${xmlEscape(body)}</t:Body>` : ""}
-          <t:Start>${start}</t:Start>
-          <t:End>${end}</t:End>
+          <t:Start>${xmlEscape(start)}</t:Start>
+          <t:End>${xmlEscape(end)}</t:End>
           ${roomEmail ? `<t:Location>${xmlEscape(getRoomDisplayName(roomEmail))}</t:Location>` : ""}
           ${recurrenceXml}
           ${required ? `<t:RequiredAttendees>${required}</t:RequiredAttendees>` : ""}
@@ -749,7 +763,7 @@ async function getItemUids(mailbox, itemIds) {
       <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>
         <t:AdditionalProperties><t:FieldURI FieldURI="calendar:UID"/></t:AdditionalProperties>
       </m:ItemShape>
-      <m:ItemIds>${itemIds.map(id => `<t:ItemId Id="${id}"/>`).join("")}</m:ItemIds>
+      <m:ItemIds>${itemIds.map(id => `<t:ItemId Id="${xmlEscape(id)}"/>`).join("")}</m:ItemIds>
     </m:GetItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -773,7 +787,7 @@ async function deleteItemById(mailbox, itemId) {
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy">
-      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}"/></m:ItemIds>
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -784,7 +798,7 @@ async function deleteItemById(mailbox, itemId) {
 }
 
 function xmlEscape(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 // ─── EWS: Calendar CRUD ───────────────────────────────────────────────────────
@@ -806,7 +820,7 @@ function extractEvents(xml) {
 }
 
 async function getEventDetails(userEmail, itemIds) {
-  const ids = itemIds.map(id => `<t:ItemId Id="${id}"/>`).join("");
+  const ids = itemIds.map(id => `<t:ItemId Id="${xmlEscape(id)}"/>`).join("");
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
@@ -877,7 +891,7 @@ async function listEvents(userEmail, start, end) {
   <soap:Body>
     <m:FindItem Traversal="Shallow">
       <m:ItemShape><t:BaseShape>AllProperties</t:BaseShape></m:ItemShape>
-      <m:CalendarView MaxEntriesReturned="100" StartDate="${start}" EndDate="${end}"/>
+      <m:CalendarView MaxEntriesReturned="100" StartDate="${xmlEscape(start)}" EndDate="${xmlEscape(end)}"/>
       <m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds>
     </m:FindItem>
   </soap:Body>
@@ -907,7 +921,7 @@ async function getRecurringMasterId(userEmail, itemId) {
           <t:FieldURI FieldURI="item:Subject"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}"/></m:ItemIds>
     </m:GetItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -923,7 +937,7 @@ async function getRecurringMasterId(userEmail, itemId) {
   <soap:Body>
     <m:GetItem>
       <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
-      <m:ItemIds><t:RecurringMasterItemId OccurrenceId="${itemId}"/></m:ItemIds>
+      <m:ItemIds><t:RecurringMasterItemId OccurrenceId="${xmlEscape(itemId)}"/></m:ItemIds>
     </m:GetItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -944,7 +958,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy" AffectedTaskOccurrences="SpecifiedOccurrenceOnly">
-      <m:ItemIds><t:ItemId Id="${itemId}" ChangeKey="${changeKey}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/></m:ItemIds>
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -958,7 +972,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy">
-      <m:ItemIds><t:ItemId Id="${itemId}" ChangeKey="${changeKey}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/></m:ItemIds>
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -984,7 +998,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy">
-      <m:ItemIds><t:ItemId Id="${deleteId}" ChangeKey="${deleteCK || changeKey}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(deleteId)}" ChangeKey="${xmlEscape(deleteCK || changeKey)}"/></m:ItemIds>
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -993,14 +1007,14 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
 
 async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, location, roomEmail, body, attendeeEmails, affectedOccurrences = 'AllOccurrences' }) {
   const fields = [];
-  if (subject) fields.push(`<t:SetItemField><t:FieldURI FieldURI="item:Subject"/><t:CalendarItem><t:Subject>${subject}</t:Subject></t:CalendarItem></t:SetItemField>`);
-  if (start) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:Start"/><t:CalendarItem><t:Start>${start}</t:Start></t:CalendarItem></t:SetItemField>`);
-  if (end) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:End"/><t:CalendarItem><t:End>${end}</t:End></t:CalendarItem></t:SetItemField>`);
+  if (subject) fields.push(`<t:SetItemField><t:FieldURI FieldURI="item:Subject"/><t:CalendarItem><t:Subject>${xmlEscape(subject)}</t:Subject></t:CalendarItem></t:SetItemField>`);
+  if (start) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:Start"/><t:CalendarItem><t:Start>${xmlEscape(start)}</t:Start></t:CalendarItem></t:SetItemField>`);
+  if (end) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:End"/><t:CalendarItem><t:End>${xmlEscape(end)}</t:End></t:CalendarItem></t:SetItemField>`);
   if (location !== undefined) {
     fields.push(`<t:DeleteItemField><t:FieldURI FieldURI="calendar:Location"/></t:DeleteItemField>`);
-    if (location) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:Location"/><t:CalendarItem><t:Location>${getRoomDisplayName(location)}</t:Location></t:CalendarItem></t:SetItemField>`);
+    if (location) fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:Location"/><t:CalendarItem><t:Location>${xmlEscape(getRoomDisplayName(location))}</t:Location></t:CalendarItem></t:SetItemField>`);
   }
-  if (body) fields.push(`<t:SetItemField><t:FieldURI FieldURI="item:Body"/><t:CalendarItem><t:Body BodyType="Text">${body}</t:Body></t:CalendarItem></t:SetItemField>`);
+  if (body) fields.push(`<t:SetItemField><t:FieldURI FieldURI="item:Body"/><t:CalendarItem><t:Body BodyType="Text">${xmlEscape(body)}</t:Body></t:CalendarItem></t:SetItemField>`);
   // Handle attendees: first read current event to preserve existing attendees/room
   if (attendeeEmails !== undefined || roomEmail !== undefined) {
     // Get current attendees from event
@@ -1025,7 +1039,7 @@ async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, 
     fields.push(`<t:DeleteItemField><t:FieldURI FieldURI="calendar:RequiredAttendees"/></t:DeleteItemField>`);
     if (finalList.length > 0) {
       const attendeeXml = finalList.map(e =>
-        `<t:Attendee><t:Mailbox><t:EmailAddress>${e}</t:EmailAddress></t:Mailbox></t:Attendee>`
+        `<t:Attendee><t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox></t:Attendee>`
       ).join("");
       fields.push(`<t:SetItemField><t:FieldURI FieldURI="calendar:RequiredAttendees"/><t:CalendarItem><t:RequiredAttendees>${attendeeXml}</t:RequiredAttendees></t:CalendarItem></t:SetItemField>`);
     }
@@ -1048,7 +1062,7 @@ async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, 
                   SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy">
       <m:ItemChanges>
         <t:ItemChange>
-          <t:ItemId Id="${useItemId}" ChangeKey="${useChangeKey}"/>
+          <t:ItemId Id="${xmlEscape(useItemId)}" ChangeKey="${xmlEscape(useChangeKey)}"/>
           <t:Updates>${fields.join("")}</t:Updates>
         </t:ItemChange>
       </m:ItemChanges>
@@ -1065,9 +1079,9 @@ async function listEmails(userEmail, opts) {
   const { unreadOnly = false, from: fromFilter = null, startDate = null, endDate = null, maxCount = 20 } = opts || {};
   const restrictions = [];
   if (unreadOnly) restrictions.push('<t:IsEqualTo><t:FieldURI FieldURI="message:IsRead"/><t:FieldURIOrConstant><t:Constant Value="false"/></t:FieldURIOrConstant></t:IsEqualTo>');
-  if (fromFilter) restrictions.push(`<t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase"><t:FieldURI FieldURI="message:From"/><t:Constant Value="${fromFilter}"/></t:Contains>`);
-  if (startDate) restrictions.push(`<t:IsGreaterThanOrEqualTo><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="${startDate}"/></t:FieldURIOrConstant></t:IsGreaterThanOrEqualTo>`);
-  if (endDate) restrictions.push(`<t:IsLessThanOrEqualTo><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="${endDate}"/></t:FieldURIOrConstant></t:IsLessThanOrEqualTo>`);
+  if (fromFilter) restrictions.push(`<t:Contains ContainmentMode="Substring" ContainmentComparison="IgnoreCase"><t:FieldURI FieldURI="message:From"/><t:Constant Value="${xmlEscape(fromFilter)}"/></t:Contains>`);
+  if (startDate) restrictions.push(`<t:IsGreaterThanOrEqualTo><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="${xmlEscape(startDate)}"/></t:FieldURIOrConstant></t:IsGreaterThanOrEqualTo>`);
+  if (endDate) restrictions.push(`<t:IsLessThanOrEqualTo><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="${xmlEscape(endDate)}"/></t:FieldURIOrConstant></t:IsLessThanOrEqualTo>`);
   // Always filter to real emails only (exclude MeetingRequest/Response/Cancellation)
   restrictions.push('<t:IsEqualTo><t:FieldURI FieldURI="item:ItemClass"/><t:FieldURIOrConstant><t:Constant Value="IPM.Note"/></t:FieldURIOrConstant></t:IsEqualTo>');
   const restriction = `<m:Restriction>${restrictions.length > 1 ? `<t:And>${restrictions.join("")}</t:And>` : restrictions[0]}</m:Restriction>`;
@@ -1085,7 +1099,7 @@ async function listEmails(userEmail, opts) {
           <t:FieldURI FieldURI="item:HasAttachments"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:IndexedPageItemView MaxEntriesReturned="${maxCount}" Offset="0" BasePoint="Beginning"/>
+      <m:IndexedPageItemView MaxEntriesReturned="${xmlEscape(maxCount)}" Offset="0" BasePoint="Beginning"/>
       ${restriction}
       <m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder>
       <m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds>
@@ -1118,7 +1132,7 @@ async function getEmail(userEmail, itemId) {
   <soap:Body>
     <m:GetItem>
       <m:ItemShape><t:BaseShape>AllProperties</t:BaseShape><t:BodyType>Text</t:BodyType></m:ItemShape>
-      <m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds>
+      <m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}"/></m:ItemIds>
     </m:GetItem>
   </soap:Body>
 </soap:Envelope>`;
@@ -1142,7 +1156,7 @@ async function markEmailAsRead(userEmail, itemId) {
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite">
-      <m:ItemChanges><t:ItemChange><t:ItemId Id="${itemId}"/>
+      <m:ItemChanges><t:ItemChange><t:ItemId Id="${xmlEscape(itemId)}"/>
         <t:Updates><t:SetItemField><t:FieldURI FieldURI="message:IsRead"/><t:Message><t:IsRead>true</t:IsRead></t:Message></t:SetItemField></t:Updates>
       </t:ItemChange></m:ItemChanges>
     </m:UpdateItem>
@@ -1154,7 +1168,7 @@ async function markEmailAsRead(userEmail, itemId) {
 
 
 async function getAttachments(userEmail, itemId) {
-  const xml1 = `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Attachments"/></t:AdditionalProperties></m:ItemShape><m:ItemIds><t:ItemId Id="${itemId}"/></m:ItemIds></m:GetItem></soap:Body></soap:Envelope>`;
+  const xml1 = `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:GetItem><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:Attachments"/></t:AdditionalProperties></m:ItemShape><m:ItemIds><t:ItemId Id="${xmlEscape(itemId)}"/></m:ItemIds></m:GetItem></soap:Body></soap:Envelope>`;
   const response1 = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml1, userEmail);
   const attachments = [];
   // Parse each FileAttachment block individually to keep name+attId+contentType together
@@ -1191,9 +1205,9 @@ function formatEmailBody(body, direction = 'auto') {
 }
 
 async function sendEmailEWS(userEmail, { to, cc = [], bcc = [], subject, body, direction = 'auto' }) {
-  const toXml = to.map(e => `<t:Mailbox><t:EmailAddress>${e}</t:EmailAddress></t:Mailbox>`).join("");
-  const ccXml = cc.map(e => `<t:Mailbox><t:EmailAddress>${e}</t:EmailAddress></t:Mailbox>`).join("");
-  const bccXml = bcc.map(e => `<t:Mailbox><t:EmailAddress>${e}</t:EmailAddress></t:Mailbox>`).join("");
+  const toXml = to.map(e => `<t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox>`).join("");
+  const ccXml = cc.map(e => `<t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox>`).join("");
+  const bccXml = bcc.map(e => `<t:Mailbox><t:EmailAddress>${xmlEscape(e)}</t:EmailAddress></t:Mailbox>`).join("");
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
@@ -1201,7 +1215,7 @@ async function sendEmailEWS(userEmail, { to, cc = [], bcc = [], subject, body, d
       <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems"/></m:SavedItemFolderId>
       <m:Items>
         <t:Message>
-          <t:Subject>${subject}</t:Subject>
+          <t:Subject>${xmlEscape(subject)}</t:Subject>
           <t:Body BodyType="HTML"><![CDATA[${formatEmailBody(body, direction)}]]></t:Body>
           <t:ToRecipients>${toXml}</t:ToRecipients>
           ${ccXml ? `<t:CcRecipients>${ccXml}</t:CcRecipients>` : ""}
@@ -1225,7 +1239,7 @@ async function replyEmailEWS(userEmail, { itemId, body, replyAll = false, direct
       <m:Items>
         <t:${tag}>
           <t:NewBodyContent BodyType="HTML"><![CDATA[${formatEmailBody(body, direction)}]]></t:NewBodyContent>
-          <t:ReferenceItemId Id="${itemId}"/>
+          <t:ReferenceItemId Id="${xmlEscape(itemId)}"/>
         </t:${tag}>
       </m:Items>
     </m:CreateItem>
@@ -1247,17 +1261,17 @@ async function checkUserInGroup(groupEmail, visited = new Set(), userEmail = nul
     if (!client) return false;
     // Get group DN from email
     const groupEntries = await ldapSearch(client, LDAP_BASE_DN,
-      `(mail=${groupEmail})`, ['distinguishedName']);
+      `(mail=${ldapEscape(groupEmail)})`, ['distinguishedName']);
     if (!groupEntries.length) {
       // Try by sAMAccountName (group alias without domain)
       const alias = groupEmail.split('@')[0];
       const aliasEntries = await ldapSearch(client, LDAP_BASE_DN,
-        `(|(sAMAccountName=${alias})(cn=${alias}))`, ['distinguishedName']);
+        `(|(sAMAccountName=${ldapEscape(alias)})(cn=${ldapEscape(alias)}))`, ['distinguishedName']);
       if (!aliasEntries.length) { try { client.unbind(); } catch(e) {} return false; }
       const groupDN = ldapAttr(aliasEntries[0], 'distinguishedName');
       // Check if user is member (recursive via LDAP_MATCHING_RULE_IN_CHAIN)
       const userEntries = await ldapSearch(client, LDAP_BASE_DN,
-        `(&(mail=${userEmail})(memberOf:1.2.840.113556.1.4.1941:=${groupDN}))`,
+        `(&(mail=${ldapEscape(userEmail)})(memberOf:1.2.840.113556.1.4.1941:=${ldapEscape(groupDN)}))`,
         ['mail']);
       try { client.unbind(); } catch(e) {}
       return userEntries.length > 0;
@@ -1265,7 +1279,7 @@ async function checkUserInGroup(groupEmail, visited = new Set(), userEmail = nul
     const groupDN = ldapAttr(groupEntries[0], 'distinguishedName');
     // LDAP_MATCHING_RULE_IN_CHAIN (1.2.840.113556.1.4.1941) checks nested membership
     const userEntries = await ldapSearch(client, LDAP_BASE_DN,
-      `(&(mail=${userEmail})(memberOf:1.2.840.113556.1.4.1941:=${groupDN}))`,
+      `(&(mail=${ldapEscape(userEmail)})(memberOf:1.2.840.113556.1.4.1941:=${ldapEscape(groupDN)}))`,
       ['mail']);
     try { client.unbind(); } catch(e) {}
     return userEntries.length > 0;
@@ -1283,7 +1297,7 @@ async function expandGroup(groupEmail, impersonateEmail = null) {
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
     <m:ExpandDL>
-      <m:Mailbox><t:EmailAddress>${groupEmail}</t:EmailAddress></m:Mailbox>
+      <m:Mailbox><t:EmailAddress>${xmlEscape(groupEmail)}</t:EmailAddress></m:Mailbox>
     </m:ExpandDL>
   </soap:Body>
 </soap:Envelope>`;
@@ -1557,7 +1571,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
         const client = await getLdapClient();
         if (!client) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
         const entries = await ldapSearch(client, LDAP_BASE_DN,
-          `(mail=${user_email})`,
+          `(mail=${ldapEscape(user_email)})`,
           ['displayName','mail','manager']
         );
         try { client.unbind(); } catch(e) {}
@@ -1612,7 +1626,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       try {
         const client = await getLdapClient();
         if (!client) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
-        const entries = await ldapSearch(client, LDAP_BASE_DN, `(mail=${user_email})`, ['displayName','manager']);
+        const entries = await ldapSearch(client, LDAP_BASE_DN, `(mail=${ldapEscape(user_email)})`, ['displayName','manager']);
         try { client.unbind(); } catch(e) {}
         if (!entries.length) return { content: [{ type: "text", text: `❌ User ${user_email} not found` }] };
         const managerDN = ldapAttr(entries[0], 'manager');
@@ -1621,7 +1635,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
         const client2 = await getLdapClient();
         if (!client2) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
         const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${managerDN})`, ['displayName','mail']);
-        const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${managerDN})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
+        const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${ldapEscape(managerDN)})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
         try { client2.unbind(); } catch(e) {}
         const mgrName  = mgr.length ? ldapAttr(mgr[0], 'displayName') : 'Unknown';
         const mgrEmail = mgr.length ? ldapAttr(mgr[0], 'mail') : '';
@@ -1649,14 +1663,14 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       try {
         const client = await getLdapClient();
         if (!client) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
-        const entries = await ldapSearch(client, LDAP_BASE_DN, `(mail=${user_email})`, ['manager']);
+        const entries = await ldapSearch(client, LDAP_BASE_DN, `(mail=${ldapEscape(user_email)})`, ['manager']);
         try { client.unbind(); } catch(e) {}
         if (!entries.length) return { content: [{ type: "text", text: `❌ User ${user_email} not found` }] };
         const managerDN = ldapAttr(entries[0], 'manager');
         if (!managerDN) return { content: [{ type: "text", text: `⚠️ No manager found for ${user_email}` }] };
         const client2 = await getLdapClient();
         const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${managerDN})`, ['mail']);
-        const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${managerDN})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
+        const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${ldapEscape(managerDN)})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
         try { client2.unbind(); } catch(e) {}
         if (!mgr.length) return { content: [{ type: "text", text: `❌ Could not resolve manager` }] };
         const mgrEmail = ldapAttr(mgr[0], 'mail');
@@ -2552,7 +2566,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
           // Note: size is always 0 from metadata call, skip nothing based on size
           try {
             // Download content NOW while attId is fresh
-            const xml = `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:GetAttachment><m:AttachmentShape/><m:AttachmentIds><t:AttachmentId Id="${a.attId}"/></m:AttachmentIds></m:GetAttachment></soap:Body></soap:Envelope>`;
+            const xml = `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:GetAttachment><m:AttachmentShape/><m:AttachmentIds><t:AttachmentId Id="${xmlEscape(a.attId)}"/></m:AttachmentIds></m:GetAttachment></soap:Body></soap:Envelope>`;
             const response = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
             const content64 = (response.match(/<(?:[^:>]+:)?Content>([\s\S]+?)<\/(?:[^:>]+:)?Content>/) || [])[1];
             if (!content64) return `${i+1}. ${a.name} — could not download`;
