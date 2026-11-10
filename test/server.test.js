@@ -13,20 +13,21 @@ const freePort = () => new Promise(r => { const s = createServer(); s.listen(0, 
 
 let jwksServer, child, BASE, ISSUER, key, otherKey;
 const CLIENT = "exchange-mcp";
+const AUDIENCE = "https://mcp.example.com";
 
 function baseEnv(port, loginPort) {
   return {
     ...process.env,
     MAIL_DOMAIN: "example.com", EWS_URL: "https://127.0.0.1:9/EWS/Exchange.asmx",
     SVC_USERNAME: "svc-exchange-mcp", SVC_PASSWORD: "not-a-real-password",
-    OIDC_ISSUER: ISSUER, OIDC_JWKS_URL: `${ISSUER}/certs`, OIDC_CLIENT_ID: CLIENT,
+    OIDC_ISSUER: ISSUER, OIDC_JWKS_URL: `${ISSUER}/certs`, OIDC_CLIENT_ID: CLIENT, OIDC_AUDIENCE: AUDIENCE,
     PUBLIC_URL: "https://mcp.example.com", PORT: String(port), LOGIN_PORT: String(loginPort),
     LDAP_URLS: "ldaps://127.0.0.1:9", LDAP_BASE_DN: "DC=example,DC=com",
     ROOMS_FILE: path.join(ROOT, "rooms.example.json"), MAX_SESSIONS_PER_USER: "2", UI_LANGUAGE: "en",
   };
 }
 const token = (claims = {}, { signKey = key, expiresIn = "5m", issuer = ISSUER } = {}) =>
-  new jose.SignJWT({ azp: CLIENT, typ: "Bearer", email: "ali@example.com", email_verified: true, ...claims })
+  new jose.SignJWT({ azp: CLIENT, aud: AUDIENCE, typ: "Bearer", email: "ali@example.com", email_verified: true, ...claims })
     .setProtectedHeader({ alg: "RS256", kid: "test" }).setIssuer(issuer).setIssuedAt().setExpirationTime(expiresIn).sign(signKey);
 
 let id = 1;
@@ -77,6 +78,8 @@ test("requests without a valid token get 401 and create no session", async () =>
 test("tokens that are not for this app are refused", async () => {
   const refused = async (t, why) => assert.equal((await rpc("initialize", INIT, { bearer: await t })).status, 401, why);
   await refused(token({ azp: "another-app" }), "issued to another client");
+  await refused(token({ aud: undefined }), "no audience");
+  await refused(token({ aud: "https://other-service.example.com" }), "issued for another service");
   await refused(token({ typ: "ID" }), "ID token");
   await refused(token({ email_verified: false }), "unverified email");
   await refused(token({ email: undefined }), "no email");
@@ -84,8 +87,8 @@ test("tokens that are not for this app are refused", async () => {
   await refused(token({}, { issuer: "http://127.0.0.1/realms/other" }), "wrong issuer");
   await refused(token({}, { signKey: otherKey }), "signed with another key");
   await refused("eyJhbGciOiJSUzI1NiJ9.e30.x", "garbage");
-  // aud naming this client is accepted even when azp differs
-  assert.equal((await rpc("initialize", INIT, { bearer: await token({ azp: "gateway", aud: ["account", CLIENT] }) })).status, 200);
+  // several audiences are fine as long as this server is one of them
+  assert.equal((await rpc("initialize", INIT, { bearer: await token({ aud: ["account", AUDIENCE] }) })).status, 200);
 });
 
 test("a signed-in user gets a session and the tools", async () => {
@@ -107,6 +110,14 @@ test("a session id never replaces the token, and belongs to its user", async () 
   assert.equal((await call("get_current_time", {}, { bearer: await token({ email: "intruder@example.com" }), sid: s.sid })).status, 404, "another user's token");
   assert.equal((await call("get_current_time", {}, { bearer, sid: "00000000-0000-4000-8000-000000000000" })).status, 404, "unknown session");
   assert.equal((await call("get_current_time", {}, { bearer, sid: s.sid })).status, 200);
+});
+
+test("logout closes the session", async () => {
+  const bearer = await token({ email: "leaver@example.com" });
+  const { sid } = await open(bearer);
+  assert.match((await call("logout", {}, { bearer, sid })).text, /Logged out/i);
+  await new Promise(r => setTimeout(r, 500));
+  assert.equal((await call("get_current_time", {}, { bearer, sid })).status, 404);
 });
 
 test("sessions per user are capped: the oldest is closed", async () => {
@@ -141,7 +152,7 @@ test("anonymous requests are rate limited; signed-in users are not caught by it"
   assert.equal((await open(await token({ email: "calm@example.com" }))).status, 200);
 });
 
-test("the server refuses to start with plain http:// or ldap:// addresses", async () => {
+test("the server refuses to start with insecure or missing settings", async () => {
   const run = extra => new Promise(async resolve => {
     const p = spawn(process.execPath, ["index.js"], { cwd: ROOT, env: { ...baseEnv(await freePort(), await freePort()), ...extra }, stdio: ["ignore", "ignore", "pipe"] });
     let err = ""; p.stderr.on("data", d => err += d);
@@ -152,4 +163,6 @@ test("the server refuses to start with plain http:// or ldap:// addresses", asyn
   assert.equal(http.code, 1); assert.match(http.err, /EWS_URL must start with https:\/\//);
   const ldap = await run({ LDAP_URLS: "ldap://127.0.0.1:9" });
   assert.equal(ldap.code, 1); assert.match(ldap.err, /LDAP_URLS must start with ldaps:\/\//);
+  const noAudience = await run({ OIDC_AUDIENCE: "" });
+  assert.equal(noAudience.code, 1); assert.match(noAudience.err, /OIDC_AUDIENCE/);
 });

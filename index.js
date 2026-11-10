@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { createServer } from "http";
-import { randomUUID, createHash } from "crypto";
+import { randomUUID } from "crypto";
 import { rootCertificates } from "tls";
 import httpntlm from "httpntlm";
 import {
@@ -16,7 +16,7 @@ import {
   ROOMS, RESTRICTED_ROOMS, EXCLUDED_ROOMS, ROOM_SIZE_GUIDE
 } from "./config.js";
 import { T } from "./i18n.js";
-import { xmlEscape, ldapEscape, assertEwsSuccess } from "./helpers.js";
+import { xmlEscape, ldapEscape, assertEwsSuccess, isWorkDay, isOpenDay, createPreviewStore } from "./helpers.js";
 
 // ─── Iran Timezone Helpers ───────────────────────────────────────────────────
 function nowIran()
@@ -115,11 +115,6 @@ async function validateJWT(token) {
 const SLOT_DURATION_MIN = 60;
 const WORK_START_HOUR = 9;
 const WORK_END_HOUR = 22;
-// 0=Sun ... 6=Sat. WORK_DAYS are the regular working days (Sat-Wed), used when looking for other
-// days to suggest. OPEN_DAYS adds days the office is open but that are not working days (Thu):
-// people can book them when they ask for that day, but they are not suggested.
-const WORK_DAYS = [6, 0, 1, 2, 3];
-const OPEN_DAYS = [...WORK_DAYS, 4];
 
 // ─── Auxiliary HTTP server (OAuth callback, attachment downloads) ─────────────
 import { registerDownload } from "./login-server.js";
@@ -423,9 +418,6 @@ async function getAvailability(emails, startDate, endDate) {
 }
 
 // ─── Helpers: Find free slots ─────────────────────────────────────────────────
-// Both take a date at UTC midnight (as built from a YYYY-MM-DD string)
-const isWorkDay = date => WORK_DAYS.includes(date.getUTCDay());
-const isOpenDay = date => OPEN_DAYS.includes(date.getUTCDay());
 
 function generateSlots(dateStr) {
   const slots = [];
@@ -1441,20 +1433,22 @@ setInterval(() => {
   for (const [key, w] of rateWindows) if (now - w.start >= 60000) rateWindows.delete(key);
 }, SESSION_SWEEP_MS).unref();
 
-// ── Confirmation for sending email ─────────────────────────────────────────────
-// send_email and reply_email never send on the first call: the server remembers the exact request
-// and returns a preview. Only a later call by the same user with identical arguments sends it, once,
-// within PENDING_SEND_MS. Any change to recipients or text is a new preview.
-const PENDING_SEND_MS = 10 * 60 * 1000;
-const PENDING_SEND_MIN_MS = 2000;   // a duplicate fired together with the preview call does not count
-const pendingSends = new Map();     // sha256(user, tool, arguments) -> time of the preview
-function confirmSend(userEmail, tool, args) {
-  const key = createHash("sha256").update(JSON.stringify([userEmail.toLowerCase(), tool, args])).digest("hex");
-  const now = Date.now();
-  for (const [k, at] of pendingSends) if (now - at > PENDING_SEND_MS) pendingSends.delete(k);
-  const previewedAt = pendingSends.get(key);
-  if (previewedAt && now - previewedAt >= PENDING_SEND_MIN_MS) { pendingSends.delete(key); return true; }
-  if (!previewedAt) pendingSends.set(key, now);
+// ── Previews before anything is sent or booked ─────────────────────────────────
+// The server remembers each exact request it has shown a preview of, per user. Sending or booking
+// only happens for a request that was previewed first: once, within 10 minutes. A changed recipient,
+// text, time or room is a different request and gets a new preview.
+const previews = createPreviewStore();
+// send_email / reply_email have no confirm flag: repeating the identical request is the confirmation
+function confirmSend(userEmail, tool, request) {
+  if (previews.consume(userEmail, tool, request)) return true;
+  previews.remember(userEmail, tool, request);
+  return false;
+}
+// Tools with a confirmed flag: confirmed=true only counts for a request that was previewed first;
+// otherwise the call is answered with the preview.
+function confirmedAfterPreview(userEmail, tool, { confirmed, ...request }) {
+  if (confirmed === true && previews.consume(userEmail, tool, request)) return true;
+  previews.remember(userEmail, tool, request);
   return false;
 }
 
@@ -1704,9 +1698,11 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       date: z.string().describe("YYYY-MM-DD"), start_time: z.string().describe("HH:MM Iran time"),
       duration_minutes: z.number(), room_email: z.string().optional(), confirmed: z.boolean()
     },
-    async ({ user_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
+    async (toolArgs) => {
+      let { user_email, subject, date, start_time, duration_minutes, room_email, confirmed } = toolArgs;
     const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
+      confirmed = confirmedAfterPreview(payload.email, "book_meeting_with_team", toolArgs);
       try {
         const client = await getLdapClient();
         if (!client) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
@@ -1772,9 +1768,11 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       room_email:       z.string().optional(),
       confirmed:        z.boolean().describe("false=preview only, true=book")
     },
-    async ({ manager_email, subject, date, start_time, duration_minutes, room_email, confirmed }) => {
+    async (toolArgs) => {
+      let { manager_email, subject, date, start_time, duration_minutes, room_email, confirmed } = toolArgs;
     const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
+      confirmed = confirmedAfterPreview(payload.email, "book_meeting_with_direct_reports", toolArgs);
       try {
         const result = await ldapGetDirectReports(manager_email);
         if (result === null) return { content: [{ type: "text", text: `❌ Manager ${manager_email} not found` }] };
@@ -1839,9 +1837,11 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       body:          z.string(),
       confirmed:     z.boolean().describe("false=preview, true=send")
     },
-    async ({ manager_email, subject, body, confirmed }) => {
+    async (toolArgs) => {
+      let { manager_email, subject, body, confirmed } = toolArgs;
     const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
+      confirmed = confirmedAfterPreview(payload.email, "send_email_to_team", toolArgs);
       try {
         const result = await ldapGetDirectReports(manager_email);
         if (result === null) return { content: [{ type: "text", text: `❌ Manager ${manager_email} not found` }] };
@@ -1967,10 +1967,12 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       }).optional().describe("For recurring/repeating meetings — handles the WHOLE series. Weekly 4 weeks: {type:'weekly',interval:1,occurrences:4}"),
       confirmed: z.boolean().default(false).describe("MUST be false on the first call. The server checks availability and replies with a preview containing the resolved date, weekday, room and attendees. Show that preview to the user verbatim and wait for explicit approval. Only then call again with confirmed=true. Never set true on the first call.")
     },
-    async ({ subject, date, start_time, duration_minutes, attendee_emails: _ae, emails, room_email, body, recurrence, confirmed }) => {
+    async (toolArgs) => {
+      let { subject, date, start_time, duration_minutes, attendee_emails: _ae, emails, room_email, body, recurrence, confirmed } = toolArgs;
       const attendee_emails = _ae || emails || [];
       const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "\u274c Session expired. Please try again \u2014 a browser will open to log in automatically." }] };
+      confirmed = confirmedAfterPreview(payload.email, "smart_schedule", toolArgs);
       const userEmail = payload.email;
       const pad = n => String(n).padStart(2, "0");
       try {
@@ -2350,10 +2352,12 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       body: z.string().optional().describe("Meeting description"),
       confirmed: z.boolean().default(false).describe("Pass true only after user has explicitly confirmed they want to proceed despite any conflicts, or after reviewing the availability report")
     },
-    async ({ group_email: _gep, group_name, subject, date, start_time, duration_minutes, room_email, body, confirmed }) => {
+    async (toolArgs) => {
+      let { group_email: _gep, group_name, subject, date, start_time, duration_minutes, room_email, body, confirmed } = toolArgs;
       const group_email = _gep || group_name;
     const payload = await validateJWT(getAutoToken());
       if (!payload) return { content: [{ type: "text", text: "❌ Session expired. Please try again — a browser will open to log in automatically." }] };
+      confirmed = confirmedAfterPreview(payload.email, "book_for_group", toolArgs);
       const userEmail = payload.email;
       const userName = payload.preferred_username;
       try {
@@ -2628,9 +2632,13 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
 
   // ── logout ──
   server.tool("logout",
-    "Logout and invalidate session.",
+    "Log out: closes this MCP session. The sign-in itself is ended by the client (it holds the tokens).",
     {},
     async () => {
+      // The server never sees the refresh token, so it cannot end the sign-in at the provider;
+      // it closes its own session once this answer has gone out.
+      const id = sessionRef && sessionRef.id;
+      if (id) setTimeout(() => closeSession(id), 250).unref();
       return { content: [{ type: "text", text: T.loggedOut }] };
     }
   );

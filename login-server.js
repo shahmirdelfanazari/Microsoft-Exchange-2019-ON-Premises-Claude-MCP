@@ -62,7 +62,7 @@ app.get("/oauth-callback", (req, res) => {
 
 // Client polls this with its state + PKCE verifier to exchange the code for tokens
 app.post("/poll-token", async (req, res) => {
-  const { state, verifier, client_id, client_secret, redirect_uri } = req.body;
+  const { state, verifier, client_id, client_secret, redirect_uri, resource } = req.body;
   const pending = pendingCodes.get(state);
   if (!pending) return res.status(404).json({ error: "No pending code for this state" });
   pendingCodes.delete(state);
@@ -72,6 +72,7 @@ app.post("/poll-token", async (req, res) => {
       redirect_uri, code_verifier: verifier
     });
     if (client_secret) params.set("client_secret", client_secret);
+    if (resource) params.set("resource", resource);   // RFC 8707
     const r = await fetch(`${OIDC_AUTH_BASE}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

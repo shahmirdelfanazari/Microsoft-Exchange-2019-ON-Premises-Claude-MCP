@@ -18,7 +18,7 @@ import crypto from "crypto";
 import { execFile } from "child_process";
 import { M } from "./messages.js";
 
-const VERSION = "2.1.1";
+const VERSION = "2.2.0";
 // Settings come from manifest.json (user_config or literal env values). An empty field, or a
 // placeholder Claude Desktop did not fill in, counts as unset.
 const setting = name => { const v = (process.env[name] || "").trim(); return v.includes("${") ? "" : v; };
@@ -33,6 +33,8 @@ const SERVER_OK = (() => {
 })();
 const CALLBACK_URL = `${SERVER_URL}/auth/oauth-callback`;
 const POLL_URL = `${SERVER_URL}/auth/poll-token`;
+// Resource indicator (RFC 8707): the tokens we ask for are meant for this server
+const RESOURCE = `resource=${encodeURIComponent(SERVER_URL)}`;
 
 const TOKEN_DIR = path.join(process.env.APPDATA || process.env.HOME || ".", ".claude");
 const TOKEN_FILE = path.join(TOKEN_DIR, "exchange-mcp-token.json");
@@ -133,7 +135,7 @@ async function pollForToken() {
     }
     const o = await getOidc();
     const result = await httpJson("POST", POLL_URL,
-      `state=${encodeURIComponent(state.state)}&verifier=${encodeURIComponent(state.verifier)}&${clientParams(o)}&redirect_uri=${encodeURIComponent(CALLBACK_URL)}`);
+      `state=${encodeURIComponent(state.state)}&verifier=${encodeURIComponent(state.verifier)}&${clientParams(o)}&redirect_uri=${encodeURIComponent(CALLBACK_URL)}&${RESOURCE}`);
     if (result && result.access_token) {
       const tokenObj = { access_token: result.access_token, refresh_token: result.refresh_token, expires_at: Date.now() + result.expires_in * 1000 };
       saveToken(tokenObj);
@@ -148,7 +150,7 @@ pollForToken();
 async function refreshAccessToken(refreshToken) {
   const o = await getOidc();
   const data = await httpJson("POST", o.tokenUrl,
-    `${clientParams(o)}&grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`);
+    `${clientParams(o)}&grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}&${RESOURCE}`);
   if (!data.access_token) throw new Error("Refresh failed");
   const tokenObj = {
     access_token: data.access_token,
@@ -171,7 +173,7 @@ async function startOAuthFlow() {
     fs.writeFileSync(STATE_FILE, JSON.stringify({ verifier, state, created: Date.now() }), { mode: 0o600 });
     const authUrl = `${o.authUrl}?` +
       `client_id=${encodeURIComponent(o.clientId)}&response_type=code&redirect_uri=${encodeURIComponent(CALLBACK_URL)}` +
-      `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}&scope=openid+profile+email`;
+      `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}&scope=openid+profile+email&${RESOURCE}`;
     openBrowser(authUrl);
   } finally {
     authInProgress = false;

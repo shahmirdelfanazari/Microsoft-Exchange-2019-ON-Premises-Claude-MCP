@@ -1,6 +1,6 @@
 {
   "name": "exchange-2019-desktop-extension",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "description": "Claude Desktop extension (.mcpb) for microsoft-exchange-2019-on-premises-claude-mcp",
   "type": "module",

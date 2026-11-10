@@ -73,6 +73,8 @@ New-ManagementRoleAssignment -Name "exchange-mcp-impersonation" `
   -Role ApplicationImpersonation -User svc-exchange-mcp -CustomRecipientWriteScope "exchange-mcp-scope"
 ```
 
+This scope still covers **every** user mailbox, which is what you want when the whole organization uses the server. To limit it to chosen people, mark their mailboxes and filter on that instead, e.g. `Set-Mailbox ali -CustomAttribute15 "MCP-Allowed"` and `-RecipientRestrictionFilter "(CustomAttribute15 -eq 'MCP-Allowed') -or (RecipientTypeDetails -eq 'RoomMailbox')"`.
+
 The same account is used for the LDAP bind by default. To keep the two apart, create a second account with no Exchange rights (any domain user can read the directory) and set `LDAP_BIND_UPN` and `LDAP_BIND_PASSWORD`.
 
 Room mailboxes should be **auto-accept** resource mailboxes.
@@ -81,7 +83,8 @@ Room mailboxes should be **auto-accept** resource mailboxes.
 
 - Client ID `exchange-mcp` (or whatever you set in `OIDC_CLIENT_ID`), standard flow, PKCE S256.
 - Redirect URIs: `http://localhost*` (Claude Code) and `https://<PUBLIC_URL>/auth/oauth-callback`.
-- Optional, stricter: add an **audience mapper** to the client that puts your `PUBLIC_URL` into the access token's `aud`, and set `OIDC_AUDIENCE` to the same value. The server then only accepts tokens issued for it specifically.
+- Add an **audience mapper** to the client (Client scopes → the client's dedicated scope → Add mapper → Audience → *Included Custom Audience* = your `PUBLIC_URL`, *Add to access token* on) and set `OIDC_AUDIENCE` to the same value. The server only accepts tokens issued for it specifically. (`OIDC_AUDIENCE=none` skips this check; not recommended.)
+- Prefer a **public client** (Client authentication off, PKCE S256 required) and leave `OIDC_CLIENT_SECRET` empty: there is then no secret to leak or rotate.
 - Turn **Advanced → OpenID Connect Compatibility Modes → "Exclude Issuer From Authentication Response"** ON. MCP clients enforce RFC 9207, and this server advertises itself as the issuer. Without this setting, login fails with `Issuer mismatch in authorization response`.
 
 ### Rooms (`rooms.json`)
