@@ -2,6 +2,7 @@
 // Every organization-specific value comes from the environment (see .env.example)
 // or from the rooms file (see rooms.example.json). Nothing secret lives in code.
 import { readFileSync, existsSync } from "fs";
+import { requireScheme } from "./helpers.js";
 
 function required(name) {
   const v = process.env[name];
@@ -69,6 +70,14 @@ export const LOGIN_PORT = Number(optional("LOGIN_PORT", "3001"));
 
 // Active Directory over LDAPS — comma-separated list, tried in order
 export const LDAP_URLS = required("LDAP_URLS").split(",").map(s => s.trim()).filter(Boolean);
+// The service account's password travels to both: refuse plain http:// and ldap://
+try {
+  requireScheme(EWS_URL, "https", "EWS_URL");
+  LDAP_URLS.forEach(u => requireScheme(u, "ldaps", "LDAP_URLS"));
+} catch (e) {
+  console.error(`❌ ${e.message}`);
+  process.exit(1);
+}
 export const LDAP_BASE_DN = required("LDAP_BASE_DN");
 // CA certificate that signed your domain controllers' certificates (PEM).
 // If the file does not exist, Node's default CA store is used.

@@ -1,4 +1,4 @@
-import { writeFileSync } from 'fs';
+import { writeFileSync, readdirSync, unlinkSync } from 'fs';
 import * as jose from "jose";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -16,6 +16,7 @@ import {
   ROOMS, RESTRICTED_ROOMS, EXCLUDED_ROOMS, ROOM_SIZE_GUIDE
 } from "./config.js";
 import { T } from "./i18n.js";
+import { xmlEscape, ldapEscape, assertEwsSuccess } from "./helpers.js";
 
 // ─── Iran Timezone Helpers ───────────────────────────────────────────────────
 function nowIran()
@@ -127,11 +128,6 @@ import ldapjsPkg from "ldapjs";
 // ── LDAP helpers for org chart ──
 
 const LDAP_SERVERS = LDAP_URLS;
-
-// Escape a value for use inside an LDAP filter (RFC 4515)
-function ldapEscape(s) {
-  return String(s).replace(/[\\*()\0]/g, c => "\\" + c.charCodeAt(0).toString(16).padStart(2, "0"));
-}
 
 function ldapAttr(entry, name) {
   const a = entry.attributes.find(a => a.type.toLowerCase() === name.toLowerCase());
@@ -801,18 +797,6 @@ async function deleteItemById(mailbox, itemId) {
   }
 }
 
-// EWS reports most failures as HTTP 200 with ResponseClass="Error". Throw, so a tool never reports
-// success for something Exchange refused.
-function assertEwsSuccess(resp, action) {
-  if (!/ResponseClass="Error"/.test(resp)) return;
-  const text = (resp.match(/<(?:[^:>]+:)?MessageText>([^<]+)</) || [])[1];
-  const code = (resp.match(/<(?:[^:>]+:)?ResponseCode>([^<]+)</) || [])[1];
-  throw new Error(`${action} failed: ${text || code || "Exchange returned an error"}${text && code ? ` (${code})` : ""}`);
-}
-
-function xmlEscape(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
 
 // ─── EWS: Calendar CRUD ───────────────────────────────────────────────────────
 function extractEvents(xml) {
@@ -1071,7 +1055,7 @@ async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, 
                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
                xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
   <soap:Body>
-    <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite"
+    <m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AutoResolve"
                   SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy">
       <m:ItemChanges>
         <t:ItemChange>
@@ -1083,7 +1067,12 @@ async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, 
   </soap:Body>
 </soap:Envelope>`;
   const resp = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
-  assertEwsSuccess(resp, "Update");
+  try { assertEwsSuccess(resp, "Update"); }
+  catch (e) {
+    // AutoResolve refuses an update made with an out-of-date change key
+    if (/ErrorIrresolvableConflict/.test(e.message)) e.message += " The event changed after it was read: call list_events for its current change_key, then try again.";
+    throw e;
+  }
 }
 
 
@@ -2780,6 +2769,11 @@ const httpServer = createServer(async (req, res) => {
   }
   res.writeHead(404); res.end("Not found");
 });
+
+// Attachment files are deleted 10 minutes after download links are issued; remove any a restart left behind.
+try {
+  for (const f of readdirSync("/tmp")) if (f.startsWith("exchange-att-")) { try { unlinkSync(`/tmp/${f}`); } catch (e) {} }
+} catch (e) {}
 
 httpServer.listen(PORT, "127.0.0.1", () => {
   console.log(`✅ Exchange MCP Server v2.0 running on port ${PORT}`);

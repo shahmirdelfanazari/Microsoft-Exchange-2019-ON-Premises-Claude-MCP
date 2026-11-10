@@ -36,8 +36,9 @@ The server holds the one password that can open every mailbox, so treat it as a 
 ## Known limitations
 
 - `send_email` and `reply_email` never send on the first call: the server stores the exact request and returns a preview, and only a later call by the same user with identical arguments (within 10 minutes, once) sends it. This stops a changed recipient or text slipping through after the preview, but the server cannot prove a human approved; keep tool-call approval on in the client for these tools.
-- `update_event` and `delete_event` act on the first call, and updates overwrite concurrent changes (`AlwaysOverwrite`).
-- Attachments are written to `/tmp` and deleted after 10 minutes. Files left behind by a restart are not cleaned up.
+- `update_event` and `delete_event` act on the first call. Updates use `ConflictResolution="AutoResolve"`: an update made with an out-of-date change key (the event changed after it was read) is refused instead of overwriting the newer version.
+- Attachments are written to `/tmp` (mode 600) and deleted after 10 minutes; files a restart left behind are removed at startup.
+- `EWS_URL` must be `https://` and `LDAP_URLS` must be `ldaps://`; the server refuses to start otherwise.
 
 ## Reporting a vulnerability
 

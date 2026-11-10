@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node --env-file=.env index.js",
-    "check": "node --check index.js && node --check login-server.js && node --check config.js"
+    "check": "node --check index.js && node --check login-server.js && node --check config.js && node --check helpers.js",
+    "test": "node --test test/helpers.test.js test/server.test.js"
   },
   "keywords": [
     "mcp",

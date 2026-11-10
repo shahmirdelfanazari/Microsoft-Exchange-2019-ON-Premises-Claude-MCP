@@ -174,6 +174,14 @@ To sign out or switch users, ask Claude to **log out** (the `logout` tool). To u
 - **Work week and hours:** `WORK_DAYS` (Saturday to Wednesday; used when suggesting other days), `OPEN_DAYS` (adds Thursday: bookable when asked for, never suggested; Friday is closed), `WORK_START_HOUR` and `WORK_END_HOUR` in `index.js`.
 - **Language:** every user-facing string lives in `locales/en.js` and `locales/fa.js`. `UI_LANGUAGE` chooses which one is used. To add a language, copy `locales/en.js` (keep every key), translate it, and register it in `i18n.js`.
 
+## Tests
+
+```bash
+npm test
+```
+
+Runs unit tests for the escaping and error helpers, and starts the real server against a local fake OIDC provider to check authentication, session limits, rate limiting and the email preview. Exchange and Active Directory are not needed (and not covered); test those on a staging copy.
+
 ## Security
 
 Read [SECURITY.md](SECURITY.md) before deploying. In short: the service account can read every mailbox, so keep the server on your internal network and keep `.env` readable by root only.
