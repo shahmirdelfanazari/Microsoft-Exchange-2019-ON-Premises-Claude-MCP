@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { createServer } from "http";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { rootCertificates } from "tls";
 import httpntlm from "httpntlm";
 import {
@@ -114,7 +114,11 @@ async function validateJWT(token) {
 const SLOT_DURATION_MIN = 60;
 const WORK_START_HOUR = 9;
 const WORK_END_HOUR = 22;
-const WORK_DAYS = [0, 1, 2, 3, 6]; // Sun=0 Mon=1 ... Sat=6 → Sat=6,Sun=0,Mon=1,Tue=2,Wed=3
+// 0=Sun ... 6=Sat. WORK_DAYS are the regular working days (Sat-Wed), used when looking for other
+// days to suggest. OPEN_DAYS adds days the office is open but that are not working days (Thu):
+// people can book them when they ask for that day, but they are not suggested.
+const WORK_DAYS = [6, 0, 1, 2, 3];
+const OPEN_DAYS = [...WORK_DAYS, 4];
 
 // ─── Auxiliary HTTP server (OAuth callback, attachment downloads) ─────────────
 import { registerDownload } from "./login-server.js";
@@ -423,16 +427,15 @@ async function getAvailability(emails, startDate, endDate) {
 }
 
 // ─── Helpers: Find free slots ─────────────────────────────────────────────────
-function isWorkDay(date) {
-  const day = date.getDay(); // 0=Sun,1=Mon,...,5=Fri,6=Sat
-  return day !== 5; // Friday is off
-}
+// Both take a date at UTC midnight (as built from a YYYY-MM-DD string)
+const isWorkDay = date => WORK_DAYS.includes(date.getUTCDay());
+const isOpenDay = date => OPEN_DAYS.includes(date.getUTCDay());
 
 function generateSlots(dateStr) {
   const slots = [];
   const [year, month, day] = dateStr.split('-').map(Number);
   const date = new Date(Date.UTC(year, month-1, day));
-  if (!isWorkDay(date)) return slots;
+  if (!isOpenDay(date)) return slots;
   const pad = n => String(n).padStart(2, "0");
   for (let h = WORK_START_HOUR; h < WORK_END_HOUR; h++) {
     for (let m = 0; m < 60; m += SLOT_DURATION_MIN) {
@@ -798,6 +801,15 @@ async function deleteItemById(mailbox, itemId) {
   }
 }
 
+// EWS reports most failures as HTTP 200 with ResponseClass="Error". Throw, so a tool never reports
+// success for something Exchange refused.
+function assertEwsSuccess(resp, action) {
+  if (!/ResponseClass="Error"/.test(resp)) return;
+  const text = (resp.match(/<(?:[^:>]+:)?MessageText>([^<]+)</) || [])[1];
+  const code = (resp.match(/<(?:[^:>]+:)?ResponseCode>([^<]+)</) || [])[1];
+  throw new Error(`${action} failed: ${text || code || "Exchange returned an error"}${text && code ? ` (${code})` : ""}`);
+}
+
 function xmlEscape(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -963,7 +975,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
-    await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
+    assertEwsSuccess(await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail), "Delete");
     return;
   }
   if (affectedOccurrences === 'AllFollowingOccurrences') {
@@ -977,7 +989,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
-    await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
+    assertEwsSuccess(await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail), "Delete");
     return;
   }
   // AllOccurrences — get recurring master and delete entire series
@@ -1003,7 +1015,7 @@ async function deleteEvent(userEmail, { itemId, changeKey, affectedOccurrences =
     </m:DeleteItem>
   </soap:Body>
 </soap:Envelope>`;
-  await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
+  assertEwsSuccess(await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail), "Delete");
 }
 
 async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, location, roomEmail, body, attendeeEmails, affectedOccurrences = 'AllOccurrences' }) {
@@ -1071,7 +1083,7 @@ async function updateEvent(userEmail, { itemId, changeKey, subject, start, end, 
   </soap:Body>
 </soap:Envelope>`;
   const resp = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
-
+  assertEwsSuccess(resp, "Update");
 }
 
 
@@ -1227,7 +1239,7 @@ async function sendEmailEWS(userEmail, { to, cc = [], bcc = [], subject, body, d
   </soap:Body>
 </soap:Envelope>`;
   const resp = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
-
+  assertEwsSuccess(resp, "Send");
 }
 
 async function replyEmailEWS(userEmail, { itemId, body, replyAll = false, direction = 'auto' }) {
@@ -1247,7 +1259,7 @@ async function replyEmailEWS(userEmail, { itemId, body, replyAll = false, direct
   </soap:Body>
 </soap:Envelope>`;
   const resp = await ewsRequest(SVC_USERNAME, SVC_PASSWORD, xml, userEmail);
-
+  assertEwsSuccess(resp, "Reply");
 }
 
 // ─── Room Access Control ─────────────────────────────────────────────────────
@@ -1440,6 +1452,23 @@ setInterval(() => {
   for (const [key, w] of rateWindows) if (now - w.start >= 60000) rateWindows.delete(key);
 }, SESSION_SWEEP_MS).unref();
 
+// ── Confirmation for sending email ─────────────────────────────────────────────
+// send_email and reply_email never send on the first call: the server remembers the exact request
+// and returns a preview. Only a later call by the same user with identical arguments sends it, once,
+// within PENDING_SEND_MS. Any change to recipients or text is a new preview.
+const PENDING_SEND_MS = 10 * 60 * 1000;
+const PENDING_SEND_MIN_MS = 2000;   // a duplicate fired together with the preview call does not count
+const pendingSends = new Map();     // sha256(user, tool, arguments) -> time of the preview
+function confirmSend(userEmail, tool, args) {
+  const key = createHash("sha256").update(JSON.stringify([userEmail.toLowerCase(), tool, args])).digest("hex");
+  const now = Date.now();
+  for (const [k, at] of pendingSends) if (now - at > PENDING_SEND_MS) pendingSends.delete(k);
+  const previewedAt = pendingSends.get(key);
+  if (previewedAt && now - previewedAt >= PENDING_SEND_MIN_MS) { pendingSends.delete(key); return true; }
+  if (!previewedAt) pendingSends.set(key, now);
+  return false;
+}
+
 function buildMcpServer(bearerToken = null, sessionRef = null) {
   // autoToken is looked up dynamically so it can be updated after session creation
   const getAutoToken = () => {
@@ -1618,7 +1647,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
         const client2 = await getLdapClient();
         if (!client2) return { content: [{ type: "text", text: `❌ LDAP unreachable for manager lookup` }] };
         const mgr = await ldapSearch(client2, LDAP_BASE_DN,
-          `(distinguishedName=${managerDN})`,
+          `(distinguishedName=${ldapEscape(managerDN)})`,
           ['displayName','mail']
         );
         try { client2.unbind(); } catch(e) {}
@@ -1665,7 +1694,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
         if (!managerDN) return { content: [{ type: "text", text: `⚠️ No manager found for ${userName}` }] };
         const client2 = await getLdapClient();
         if (!client2) return { content: [{ type: "text", text: "❌ LDAP unreachable" }] };
-        const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${managerDN})`, ['displayName','mail']);
+        const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${ldapEscape(managerDN)})`, ['displayName','mail']);
         const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${ldapEscape(managerDN)})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
         try { client2.unbind(); } catch(e) {}
         const mgrName  = mgr.length ? ldapAttr(mgr[0], 'displayName') : 'Unknown';
@@ -1698,7 +1727,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
         const managerDN = ldapAttr(entries[0], 'manager');
         if (!managerDN) return { content: [{ type: "text", text: `⚠️ No manager found for ${user_email}` }] };
         const client2 = await getLdapClient();
-        const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${managerDN})`, ['mail']);
+        const mgr = await ldapSearch(client2, LDAP_BASE_DN, `(distinguishedName=${ldapEscape(managerDN)})`, ['mail']);
         const teammates = await ldapSearch(client2, LDAP_BASE_DN, `(&(objectClass=user)(manager=${ldapEscape(managerDN)})(mail=*)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`, ['displayName','mail']);
         try { client2.unbind(); } catch(e) {}
         if (!mgr.length) return { content: [{ type: "text", text: `❌ Could not resolve manager` }] };
@@ -2495,7 +2524,7 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
 
   // ── send_email ──
   server.tool("send_email",
-    "Send an email. Supports To, CC, BCC, subject and body.",
+    "Send an email (To, CC, BCC, subject, body). The first call only returns a preview and sends nothing. After the user approves the preview, call again with exactly the same arguments to send.",
     {
       to: z.array(z.string()),
       cc: z.array(z.string()).optional(),
@@ -2510,18 +2539,23 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       const userEmail = payload.email;
       const userName = payload.preferred_username;
       try {
-        await sendEmailEWS(userEmail, { to, cc: cc || [], bcc: bcc || [], subject, body, direction: direction || 'auto' });
-        let out = `✅ Email sent!\n📧 To: ${to.join(", ")}`;
+        const mail = { to, cc: cc || [], bcc: bcc || [], subject, body, direction: direction || 'auto' };
+        let out = `📧 To: ${to.join(", ")}`;
         if (cc?.length) out += `\n📋 CC: ${cc.join(", ")}`;
+        if (bcc?.length) out += `\n🙈 BCC: ${bcc.join(", ")}`;
         out += `\n📌 Subject: ${subject}`;
-        return { content: [{ type: "text", text: out }] };
+        if (!confirmSend(userEmail, "send_email", mail)) {
+          return { content: [{ type: "text", text: `📋 ${T.emailPreviewTitle}\n\n${out}\n\n${body}\n\n${T.emailPreviewFooter}` }] };
+        }
+        await sendEmailEWS(userEmail, mail);
+        return { content: [{ type: "text", text: `✅ Email sent!\n${out}` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }
   );
 
   // ── reply_email ──
   server.tool("reply_email",
-    "Reply to an existing email by ID.",
+    "Reply to an existing email by ID. The first call only returns a preview and sends nothing. After the user approves the preview, call again with exactly the same arguments to send.",
     {
       item_id: z.string(),
       body: z.string(),
@@ -2534,7 +2568,11 @@ NEVER say "${T.instr.noRecurring}" — smart_schedule HAS recurrence param, alwa
       const userEmail = payload.email;
       const userName = payload.preferred_username;
       try {
-        await replyEmailEWS(userEmail, { itemId: item_id, body, replyAll: reply_all || false, direction: direction || 'auto' });
+        const reply = { itemId: item_id, body, replyAll: reply_all || false, direction: direction || 'auto' };
+        if (!confirmSend(userEmail, "reply_email", reply)) {
+          return { content: [{ type: "text", text: `📋 ${T.emailPreviewTitle}\n\n↩️ ${reply.replyAll ? "Reply all" : "Reply"}:\n\n${body}\n\n${T.emailPreviewFooter}` }] };
+        }
+        await replyEmailEWS(userEmail, reply);
         return { content: [{ type: "text", text: `✅ Reply sent${reply_all ? " (reply all)" : ""}.` }] };
       } catch (e) { return { content: [{ type: "text", text: `❌ ${e.message}` }] }; }
     }

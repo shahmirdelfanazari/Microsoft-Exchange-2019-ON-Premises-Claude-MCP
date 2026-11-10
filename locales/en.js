@@ -94,6 +94,8 @@ export default {
   previewTitle: "Preview — nothing has been booked and no invitations have been sent yet.",
   allFree: "Everyone is free at this time.",
   previewFooter: "Show this preview to the user exactly as is and wait for explicit approval. After approval, call this tool again with confirmed=true.",
+  emailPreviewTitle: "Preview — nothing has been sent yet.",
+  emailPreviewFooter: "Show this preview to the user exactly as is and wait for explicit approval. After approval, call this tool again with exactly the same arguments to send. Any change produces a new preview.",
   roomDeclined: (room, missing, total, hhmm) => `Meeting not booked. Room ${room} declined ${missing} of ${total} dates in the series at ${hhmm} (conflict or no access)`,
   seriesCancelled: "To avoid a meeting without a room, the whole series was cancelled. Please choose a time or room that is free on every date.",
   rollbackFailed: r => `Warning: automatic cancellation failed (${r}). Please check and delete the meeting manually.`,

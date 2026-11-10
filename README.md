@@ -171,7 +171,7 @@ To sign out or switch users, ask Claude to **log out** (the `logout` tool). To u
 ## Customizing
 
 - **Timezone:** Iran time (fixed +210 minutes, no DST) is used in `nowIran()`, `isPastDateTime()`, `iranLocalToMs()`, `get_current_time` and the availability request (`Bias=-210`). Change these for another zone.
-- **Work week and hours:** `isWorkDay()` (Friday off), `WORK_START_HOUR` and `WORK_END_HOUR` in `index.js`.
+- **Work week and hours:** `WORK_DAYS` (Saturday to Wednesday; used when suggesting other days), `OPEN_DAYS` (adds Thursday: bookable when asked for, never suggested; Friday is closed), `WORK_START_HOUR` and `WORK_END_HOUR` in `index.js`.
 - **Language:** every user-facing string lives in `locales/en.js` and `locales/fa.js`. `UI_LANGUAGE` chooses which one is used. To add a language, copy `locales/en.js` (keep every key), translate it, and register it in `i18n.js`.
 
 ## Security

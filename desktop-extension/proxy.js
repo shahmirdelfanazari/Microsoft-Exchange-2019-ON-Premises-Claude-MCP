@@ -18,7 +18,7 @@ import crypto from "crypto";
 import { execFile } from "child_process";
 import { M } from "./messages.js";
 
-const VERSION = "2.1.0";
+const VERSION = "2.1.1";
 // Settings come from manifest.json (user_config or literal env values). An empty field, or a
 // placeholder Claude Desktop did not fill in, counts as unset.
 const setting = name => { const v = (process.env[name] || "").trim(); return v.includes("${") ? "" : v; };
@@ -430,11 +430,11 @@ server.tool("read_email", "Read the full content of an email. Use get_attachment
   { item_id: z.string() },
   async (args) => callTool("read_email", args));
 
-server.tool("send_email", "Send an email.",
+server.tool("send_email", "Send an email. The first call returns a preview and sends nothing; after the user approves, call again with exactly the same arguments to send.",
   { to: z.array(z.string()), cc: z.array(z.string()).optional(), bcc: z.array(z.string()).optional(), subject: z.string(), body: z.string(), direction: z.enum(["auto","rtl","ltr"]).optional().describe("auto=detect, rtl=Persian/Arabic, ltr=English") },
   async (args) => callTool("send_email", args));
 
-server.tool("reply_email", "Reply to an existing email.",
+server.tool("reply_email", "Reply to an existing email. The first call returns a preview and sends nothing; after the user approves, call again with exactly the same arguments to send.",
   { item_id: z.string(), body: z.string(), reply_all: z.boolean().optional(), direction: z.enum(["auto","rtl","ltr"]).optional().describe("auto=detect, rtl=Persian/Arabic, ltr=English") },
   async (args) => callTool("reply_email", args));
 
